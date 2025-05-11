@@ -1,7 +1,7 @@
 2025.05.11 update:  
 ※ 请注意论坛cookie与user-agent有对应关系！  
 1, 主数据结构更新（见下方code块），新增了对“帖子被推次数”与“用户主页链接”的获取  
-2, 移除了所有topic_datas中经过加密的pickle序列化数据文件（经过假名的朱庇特记事本分析记录仍保留），请在releases处获取
+2, 移除了所有topic_datas中经过加密的pickle序列化数据文件（经过假名的朱庇特记事本分析记录仍保留），请kf私信获取
 ```
 topic_info {
     topic_url:      str,            #主题帖链接
