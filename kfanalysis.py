@@ -249,6 +249,12 @@ if __name__ == "__main__":
     # 也可以解码urllist后使用模式0
     kf = KFanalysis()
 
+    if not os.path.exists("topic_datas"): os.mkdir("topic_datas")
+    if not os.path.exists("topic_sources"): os.mkdir("topic_sources")
+    if not os.path.exists("done_url_list"):
+        f = open("done_url_list", "wt")
+        f.close()
+
     if mode == 0:
     # 使用urllist时
         with open("url_list", "rt") as f:
