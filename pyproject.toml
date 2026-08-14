@@ -1,0 +1,15 @@
+[project]
+name = "kf-analysis"
+version = "2.0.0"
+description = "KF论坛活跃度数据获取程序"
+requires-python = ">=3.12"
+dependencies = [
+    "requests",
+    "beautifulsoup4",
+    "lxml",
+    "matplotlib>=3.11.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
