@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 from . import analyser, utils
 from .service import Client, Storage
 
+
 logger = logging.getLogger("kf-analysis")
 
 
@@ -26,7 +27,6 @@ class KFanalysis:
             except Exception as e:
                 logger.error(f"板块 {fid} 访问失败，错误信息 {e}", exc_info=True)
                 return []
-
         result = []
         print()
         for page in range(1, 11):
@@ -60,7 +60,6 @@ class KFanalysis:
         if status == "incorrect":
             logger.error(f"帖子不存在或安全码错误 ({topic_id}, {topic_sf})，状态码 {response.status_code}")
             return False
-
         topic_info = analyser.parse_topic_info(soup, topic_id, topic_sf)
         db_total = self.storage.get_topic_floor_count(topic_id)
         page_sources = [(1, response.content)]
@@ -73,7 +72,6 @@ class KFanalysis:
             username_dict = {u: 1 for u in self.storage.get_topic_usernames(topic_id)}
         else:
             return None
-
         def echo():
             print(f"{index+1}/{total}  {len(page_sources):>5} / {len(page_list)+1:<5}  "
                   f"{current_page}  {topic_info['topic_title']}")
@@ -87,7 +85,6 @@ class KFanalysis:
             page_sources.append((page, response.content))
             if disp: echo()
             time.sleep(self.config.timegap_topic_in)
-
         replylist = analyser.parse_replies([content for _, content in page_sources],
                                            topic_id, topic_sf, username_dict)
         topic_info["reply_list"] = replylist

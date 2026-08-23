@@ -1,7 +1,7 @@
 import re, time
 from datetime import datetime
 from bs4 import BeautifulSoup, NavigableString
-from .utils import split_userhome, topic_url
+from .utils import split_userhome
 
 
 def check_page_status(soup):
@@ -198,26 +198,6 @@ def parse_replies(page_list, topic_id, topic_sf, username_dict=None):
             xdict["image_list"] = images
             replylist.append(xdict)
     return replylist
-
-
-def buy_topic(client, topic_id, topic_sf, mode):
-    # ↓返回值说明：价格=可购买；-1=已购买；-2=无可购买内容；mode=buy 时执行购买
-    soup = BeautifulSoup(client.get(topic_url(topic_id, topic_sf)).content, "lxml")
-    box = soup.find("div", id="pidtpc").select_one("td:nth-child(2) > div:nth-child(1)")
-    fs = None
-    for q in box.find_all("fieldset"):
-        legend = q.find("legend")
-        if legend and "此帖售价" in legend.text:
-            fs = q
-            break
-    if fs is None: return -2
-    button = fs.find("input", onclick=lambda v: v and "buytopic" in v)
-    if button is None: return -1
-    price = int(re.findall(r"此帖售价\s*(\d+)", fs.find("legend").text)[0])
-    if mode == "buy":
-        onclick = button["onclick"]
-        client.get("https://bbs.kfpromax.com/" + re.search(r'location\.href="([^"]+)"', onclick).group(1))
-    return price
 
 
 def parse_profile_page(soup):

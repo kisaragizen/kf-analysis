@@ -1,9 +1,9 @@
 # kf-analysis
 
-绯月论坛活跃度数据获取与分析项目 v2.0.0，完成了架构级重构与全面优化。  
+绯月论坛活跃度数据获取与分析项目 v2.1.0，在 v2.0.0 新架构的基础上新增论坛动作支持（发帖/编辑/购买/转账）。  
 数据获取支持 CLI 与 Python API 两种调用方式，数据持久化采用 SQLite，数据分析由 activity_analysis.ipynb 完成。  
 移除原有硬编码逻辑，支持板块级与主题级增量抓取，并大幅优化页面解析逻辑与数据查询性能。  
-经 201,248 条回复数据实测，数据抓取与入库结果符合预期。  
+经 212,355 条回复数据实测，数据抓取与入库结果符合预期（260823 时数据）。  
 
 * 本项目运行在 bbs.kfpromax.com 域名下。  
 * 本项目的文件内注释比 README.md 更详细。
@@ -19,9 +19,11 @@
 ## CLI 调用
 以下命令均省略前缀 `python -m kf_analysis`。  
 
-CLI 命令主要分为两类：  
+CLI 命令主要分为三类：  
 * `fetch`：获取并解析数据，并将结果写入默认或指定的数据库。  
-* `get`：获取并解析数据，但不写入数据库，而是将结果输出到屏幕或写入文件。
+* `get`：获取并解析数据，但不写入数据库，而是将结果输出到屏幕或写入文件。  
+* `buy`、`transfer`：售价主题查价/购买；论坛银行转账。  
+（未支持全部论坛动作的 CLI 调用，这是主动设计，详见**包内函数调用**章节）
 
 **fetch 类命令**
 ```text
@@ -41,6 +43,14 @@ get usernames <link> [--dedup] # 输出指定主题的参与用户列表；--ded
 get homepage <link>            # 输出指定用户的主页信息
 ```
 
+**buy / transfer 命令**  
+```text
+buy <link> [--buy]                              # 主题购买功能
+transfer <username> <amount> [--memo <附言>]    # 贡献转账功能
+```
+* `buy`：仅当指定 `--buy` 参数时才会执行购买，否则执行价格查询。  
+* `transfer`：向指定账号转账 <amount>（HB）。
+
 **查询数据库当前状态**
 ```text
 state [--db <路径>]    # 返回数据库当前状态以及错误日志的最新十行
@@ -50,17 +60,19 @@ state [--db <路径>]    # 返回数据库当前状态以及错误日志的最�
 ```
 python -m kf_analysis fetch all
 python -m kf_analysis fetch board 5
-python -m kf_analysis fetch topic "https://bbs.kfpromax.com/read.php?tid=12345&sf=abc"
+python -m kf_analysis fetch topic "https://bbs.kfpromax.com/read.php?tid={$TID}&sf={$SF}"
 python -m kf_analysis fetch topic --file links.txt
-python -m kf_analysis get json  "https://bbs.kfpromax.com/read.php?tid=12345&sf=abc"
-python -m kf_analysis get usernames "https://bbs.kfpromax.com/read.php?tid=12345&sf=abc"
-python -m kf_analysis get homepage "https://bbs.kfpromax.com/profile.php?action=show&uid=123&sf=abc"
+python -m kf_analysis get json "https://bbs.kfpromax.com/read.php?tid={$TID}&sf={$SF}"
+python -m kf_analysis get usernames "https://bbs.kfpromax.com/read.php?tid={$TID}&sf={$SF}"
+python -m kf_analysis get homepage "https://bbs.kfpromax.com/profile.php?action=show&uid={$UID}&sf={$SF}"
+python -m kf_analysis buy "https://bbs.kfpromax.com/read.php?tid={$TID}&sf={$SF}" --buy
+python -m kf_analysis transfer {$USERNAME} 0.5 --memo "{$MEMO}"
 python -m kf_analysis state
 ```
 
 
 ## 包内函数调用
-包内调用分为两个层级：**`analyser` 纯解析函数**与 **`KFanalysis` 封装类**。
+包内调用分为三个层级：**`analyser` 纯解析函数**、**`KFanalysis` 封装类**与 **`Actions` 封装类**。
 
 **纯解析函数（`analyser`）**  
 `analyser` 提供与网络请求、数据库无关的纯解析函数。  
@@ -76,7 +88,6 @@ replies = analyser.parse_replies([html_text], tid, sf)       # 传入 html_text 
 ```
 以上仅为简易调用示例，完整说明请参阅 `analyser.py` 中的函数注释。  
 `analyser` 包含的其他函数：  
-* `buy_topic(client, tid, sf, mode)` → 主题购买函数；默认仅返回价格，`mode="buy"` 时执行购买。  
 * `parse_board_page(soup)` → 解析板块页，返回该页所有主题的 URL 列表。  
 * `parse_profile_page(soup)` → 解析用户主页信息，返回 dict。
 
@@ -111,10 +122,27 @@ stats = kf.storage.stats()                           # ↔ state
 主题被关闭或删除时，若数据库中尚无该主题，则会插入对应的占位条目。  
 帖子不存在或安全码错误时，记录至 `error.log`，不写入数据库。
 
+**Actions 封装类（`actions`）**  
+论坛动作的封装，包含功能：发帖/编辑/原始内容获取/购买/转账。  
+其中前三种功能只提供包内函数调用方式。
+```python
+from kf_analysis.actions import Actions, buy_topic, transfer_money
+
+acts = Actions(config)                                   # config 可缺省，缺省时会从配置文件读
+acts.post_reply(tid, sf, "正文")                         # 回复贴发帖函数
+acts.post_topic(fid, "正文", title="标题")               # 主题帖发帖函数
+acts.edit_post(tid, sf, pid, article, content="新正文")  # 帖子编辑函数
+data = acts.get_post_content(tid, sf, pid, article)      # 获取帖子原始内容
+price = buy_topic(acts.client, tid, sf)                 # 查价：价格 / -1 已购买 / -2 无可购买内容
+buy_topic(acts.client, tid, sf, "buy")                  # 执行购买，失败返回 None
+transfer_money(acts.client, "username", 0.5, memo="附言") # 银行转账
+```
+需要特别注意到是，目前 `post_topic` 函数只支持**没有强制二级分类的普通板块**。  
+帖子原始内容是指帖子 bbocde 标签尚未经服务器转义的原始文本，需要对目标贴子的编辑权限。
+
 **其他重要函数**  
 ```python
 from kf_analysis import analytics
-
 replies, topics = analytics.query_data(start_time, end_time, username, board_name, db_path, reverse)
 # 每个参数都是可缺省的，全部缺省则读入整个数据库，否则按照参数指定的范围读取数据
 # 返回值有两个，分别是散装回复列表与按主题聚合的回复列表
@@ -194,6 +222,7 @@ kf_analysis/
 ├── coordinator.py        # 行为编排
 ├── service.py            # 网络请求与数据库操作
 ├── analyser.py           # 页面解析
+├── actions.py            # 论坛动作（发帖/编辑/购买/转账/原始内容）
 ├── analytics.py          # query_data 函数与绘图函数
 └── utils.py              # 杂项工具
 activity_analysis.ipynb   # 数据分析笔记本
@@ -205,9 +234,11 @@ kf.db                     # 默认数据库（自动生成）
 
 ## 更新展望
 ※ 借助 get_homepage 实现自动化使用插值法估算月度新增账号
+※ post_topic 主题发帖功能尚未经过实际测试，等待时机允许
 
 
 ## 更新日志
+2026.08.23 update:   新增论坛动作支持（v2.1.0）  
 2026.08.14 update:   架构重构（v2.0.0）  
 2025.06.07 update:   优化主数据结构（v1.1.0）  
 2025.05.11 original: 初始版本（v1.0.0）

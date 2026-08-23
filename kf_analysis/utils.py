@@ -2,6 +2,7 @@ import json, re
 from dataclasses import dataclass
 from pathlib import Path
 
+
 READ_PHP = "https://bbs.kfpromax.com/read.php"
 
 

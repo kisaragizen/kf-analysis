@@ -9,6 +9,7 @@ def text_length(text):
     if not text: return 0
     return len(text.encode("utf-8"))
 
+
 def to_datetime(v):
     if isinstance(v, datetime):
         return v
@@ -20,7 +21,6 @@ def to_datetime(v):
 def readable2unix(s): return int(to_datetime(s).timestamp())
 def unix2readable(ts, fmt="%Y-%m-%d"): return to_datetime(ts).strftime(fmt)
 def readable2weekday(ts): return "周" + "一二三四五六日"[to_datetime(ts).weekday()]
-
 
 
 def query_data(start_time=None, end_time=None, username=None, board_name=None, db_path="kf.db", reverse=False):
@@ -39,7 +39,6 @@ def query_data(start_time=None, end_time=None, username=None, board_name=None, d
         conds.append("board_name = ?")
         params.append(board_name)
     where = " AND ".join(conds) if conds else "1"
-
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -52,7 +51,6 @@ def query_data(start_time=None, end_time=None, username=None, board_name=None, d
             f"FROM reply r JOIN topic t ON r.topic_id = t.topic_id "
             f"WHERE {where} ORDER BY r.reply_time",
             params).fetchall()
-
         replies, topics = [], []
         tid_index = {}
         for row in rows:
@@ -77,7 +75,6 @@ def query_data(start_time=None, end_time=None, username=None, board_name=None, d
             topics[tid_index[tid]]["reply_list"].append(r)
             replies.append(r)
         topics.sort(key=lambda t: t["topic_time"], reverse=reverse)
-
         if topics:
             tids = [t["topic_id"] for t in topics]
             placeholders = ",".join("?" * len(tids))
@@ -95,16 +92,15 @@ def query_data(start_time=None, end_time=None, username=None, board_name=None, d
         conn.close()
 
 
-
 def finish_plot(save, dpi=100, adjust=None):
     plt.tight_layout()
     if adjust: plt.subplots_adjust(**adjust)
     if save: plt.savefig(save, dpi=dpi)
     plt.show()
 
+
 def annotate_values(x, y):
     for xi, yi in zip(x, y): plt.text(xi, yi, f"{yi:g}", ha="center", va="bottom")
-
 
 
 def output_plot_bar(x, y, title=None, save=None, annotate=True, color="lightpink",
@@ -119,6 +115,7 @@ def output_plot_bar(x, y, title=None, save=None, annotate=True, color="lightpink
     plt.xticks(x, rotation=rotation)
     finish_plot(save)
 
+
 def output_plot_line(x, y, title=None, save=None, annotate=True, color="skyblue",
                      figsize=(16, 6), rotation=45):
     plt.figure(figsize=figsize)
@@ -130,6 +127,7 @@ def output_plot_line(x, y, title=None, save=None, annotate=True, color="skyblue"
         plt.title(title)
     plt.xticks(x, rotation=rotation)
     finish_plot(save)
+
 
 def calendar_heatmap(day_counts, start, end, title=None, save=None, cmap="OrRd",
                      count_label="回复贴数量", figsize=(22, 13), cell_height=0.5):
@@ -155,7 +153,6 @@ def calendar_heatmap(day_counts, start, end, title=None, save=None, cmap="OrRd",
             mmdd[row, col] = m
             if m.endswith("01"):
                 month_1st_row.setdefault(int(m[:2]), row)
-
     fig, ax = plt.subplots(figsize=(figsize[0], 2.4 + rows * cell_height))
     cm = plt.colormaps[cmap]
     cm.set_bad(color="#F0F0F0")
@@ -163,7 +160,6 @@ def calendar_heatmap(day_counts, start, end, title=None, save=None, cmap="OrRd",
     ax.set_aspect("auto")
     ax.invert_yaxis()
     ax.set_ylim(rows, 0)
-
     valid = data[~np.isnan(data)]
     norm = plt.Normalize(vmin=0, vmax=valid.max() if valid.size else 1)
     for row in range(rows):
@@ -177,12 +173,10 @@ def calendar_heatmap(day_counts, start, end, title=None, save=None, cmap="OrRd",
             ax.text(col + 0.91, row + 0.91, mmdd[row, col],
                     ha="right", va="bottom", fontsize=8.5, fontweight="bold",
                     color="white" if deep else "#333333")
-
     ax.vlines(7, 0, rows, color="#999999", linewidth=2.5, alpha=0.45)
     for row in month_1st_row.values():
         if row > 0:
             ax.axhline(y=row, color="#999999", linewidth=1.5, alpha=0.35)
-
     ax.set_xticks(np.arange(14) + 0.5)
     ax.set_xticklabels(["周一", "周二", "周三", "周四", "周五", "周六", "周日"] * 2,
                        fontsize=10.5, fontweight="bold")
@@ -194,7 +188,6 @@ def calendar_heatmap(day_counts, start, end, title=None, save=None, cmap="OrRd",
     ax_top.set_xticklabels(["第一周", "第二周"], fontsize=11.5, fontweight="bold", color="#444444")
     ax_top.tick_params(length=0, pad=10)
     ax_top.spines["top"].set_visible(False)
-
     ax.set_yticks([p + 0.5 for p in month_1st_row])
     ax.set_yticklabels([f"{m}月" for m in month_1st_row],
                        fontsize=10, fontweight="bold", color="#444444")
@@ -202,7 +195,6 @@ def calendar_heatmap(day_counts, start, end, title=None, save=None, cmap="OrRd",
     for spine in ax.spines.values():
         spine.set_visible(False)
     ax.set_ylim(rows, 0)
-
     if title:
         ax.set_title(title, fontsize=18)
     cbar_ax = fig.add_axes([0.55, 0.045, 0.38, 0.025])
@@ -210,5 +202,4 @@ def calendar_heatmap(day_counts, start, end, title=None, save=None, cmap="OrRd",
     cbar.set_label(count_label, fontsize=11, fontweight="bold", color="#333333", labelpad=8)
     cbar.ax.tick_params(labelsize=8.5)
     cbar.outline.set_visible(False)
-
     finish_plot(save, adjust={"bottom": 0.14, "right": 0.93})

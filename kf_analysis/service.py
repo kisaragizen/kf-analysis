@@ -1,4 +1,3 @@
-# 网络请求 Client 与数据库操作 Storage 模块
 import json, sqlite3, time
 import requests
 from requests.adapters import HTTPAdapter
