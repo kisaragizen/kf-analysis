@@ -1,6 +1,8 @@
 # 暂不支持有强制主题分类的板块进行主题发帖
 # 不影响这些板块中回复发帖/编辑发帖/获取帖子原始内容的功能
+import os
 import re
+import requests
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 from .service import Client
@@ -46,10 +48,20 @@ def transfer_money(client, username, amount, memo=""):
     return resp.content.decode("gbk", errors="replace")
 
 
+def upload_image(path):
+    # inari.site 图床上传
+    if os.path.getsize(path) > 2 * 1024 * 1024: raise ValueError("图片大小超出限制")
+    with open(path, "rb") as f: r = requests.post("https://up.inari.site/upload", files={"file": (os.path.basename(path), f)}, timeout=60)
+    data = r.json()
+    if not data["status"]: raise RuntimeError(data["message"])
+    return data["data"]["links"]["url"]
+
+
 class Actions:
     def __init__(self, config=None):
         self.client = Client(config if config is not None else load_config())
 
+    @staticmethod
     def gbk_len(text):
         return len(text.encode("gbk", errors="replace"))
 
