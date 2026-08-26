@@ -23,7 +23,7 @@ CLI 命令主要分为三类：
 * `fetch`：获取并解析数据，并将结果写入默认或指定的数据库。  
 * `get`：获取并解析数据，但不写入数据库，而是将结果输出到屏幕或写入文件。  
 * `buy`、`transfer`：售价主题查价/购买；论坛银行转账。  
-（未支持全部论坛动作的 CLI 调用，这是主动设计，详见**包内函数调用**章节）
+（并非全部论坛动作都有 CLI 调用支持，这是主动设计，详见**包内函数调用**章节）
 
 **fetch 类命令**
 ```text
@@ -45,11 +45,11 @@ get homepage <link>            # 输出指定用户的主页信息
 
 **buy / transfer 命令**  
 ```text
-buy <link> [--buy]                              # 主题购买功能
-transfer <username> <amount> [--memo <附言>]    # 贡献转账功能
+buy <link> [--buy]                                             # 主题购买功能
+transfer <username>[, <username>...] <amount> [--memo <附言>]  # 贡献转账功能
 ```
 * `buy`：仅当指定 `--buy` 参数时才会执行购买，否则执行价格查询。  
-* `transfer`：向指定账号转账贡献。
+* `transfer`：向一个或多个账号转账贡献，多个用户名以半角逗号分隔。
 
 **查询数据库当前状态**
 ```text
@@ -66,7 +66,7 @@ python -m kf_analysis get json "https://bbs.kfpromax.com/read.php?tid={$TID}&sf=
 python -m kf_analysis get usernames "https://bbs.kfpromax.com/read.php?tid={$TID}&sf={$SF}"
 python -m kf_analysis get homepage "https://bbs.kfpromax.com/profile.php?action=show&uid={$UID}&sf={$SF}"
 python -m kf_analysis buy "https://bbs.kfpromax.com/read.php?tid={$TID}&sf={$SF}" --buy
-python -m kf_analysis transfer {$USERNAME} 0.5 --memo "{$MEMO}"
+python -m kf_analysis transfer "{$USERNAME1}, {$USERNAME2}" 0.5 --memo "{$MEMO}"
 python -m kf_analysis state
 ```
 
@@ -84,7 +84,7 @@ from kf_analysis import analyser
 soup = BeautifulSoup(html_text, "lxml")                     # html_text 为页面原始字节
 status = analyser.check_page_status(soup)                   # 判断主题状态：normal / closed / deleted / incorrect
 info = analyser.parse_topic_info(soup, tid, sf)             # 根据第一页的 soup 解析主题头信息并返回 dict
-replies = analyser.parse_replies([html_text], tid, sf)       # 传入 html_text 列表，解析所有楼层信息并返回 dict
+replies = analyser.parse_replies([html_text], tid, sf)      # 传入 html_text 列表，解析所有楼层信息并返回 dict
 ```
 以上仅为简易调用示例，完整说明请参阅 `analyser.py` 中的函数注释。  
 `analyser` 包含的其他函数：  
@@ -128,13 +128,13 @@ stats = kf.storage.stats()                           # ↔ state
 ```python
 from kf_analysis.actions import Actions, buy_topic, transfer_money
 
-acts = Actions(config)                                   # config 可缺省，缺省时会从配置文件读
-acts.post_reply(tid, sf, "正文")                         # 回复贴发帖函数
-acts.post_topic(fid, "正文", title="标题")               # 主题帖发帖函数
-acts.edit_post(tid, sf, pid, article, content="新正文")  # 帖子编辑函数
-data = acts.get_post_content(tid, sf, pid, article)      # 获取帖子原始内容
-price = buy_topic(acts.client, tid, sf)                 # 查价：价格 / -1 已购买 / -2 无可购买内容
-buy_topic(acts.client, tid, sf, "buy")                  # 执行购买，失败返回 None
+acts = Actions(config)                                    # config 可缺省，缺省时会从配置文件读
+acts.post_reply(tid, sf, "正文")                          # 回复贴发帖函数
+acts.post_topic(fid, "正文", title="标题")                # 主题帖发帖函数
+acts.edit_post(tid, sf, pid, article, content="新正文")   # 帖子编辑函数
+data = acts.get_post_content(tid, sf, pid, article)       # 获取帖子原始内容
+price = buy_topic(acts.client, tid, sf)                   # 查价：价格 / -1 已购买 / -2 无可购买内容
+buy_topic(acts.client, tid, sf, "buy")                    # 执行购买，失败返回 None
 transfer_money(acts.client, "username", 0.5, memo="附言") # 银行转账
 ```
 需要特别注意到是，目前 `post_topic` 函数只支持**没有强制二级分类的普通板块**。  
@@ -222,7 +222,7 @@ kf_analysis/
 ├── coordinator.py        # 行为编排
 ├── service.py            # 网络请求与数据库操作
 ├── analyser.py           # 页面解析
-├── actions.py            # 论坛动作（发帖/编辑/购买/转账/原始内容）
+├── actions.py            # 论坛动作（发帖/编辑/购买/转账/原始内容获取）
 ├── analytics.py          # query_data 函数与绘图函数
 └── utils.py              # 杂项工具
 activity_analysis.ipynb   # 数据分析笔记本
@@ -233,8 +233,7 @@ kf.db                     # 默认数据库（自动生成）
 
 
 ## 更新展望
-※ 借助 get_homepage 实现自动化使用插值法估算月度新增账号  
-※ 转账的 CLI 应该改成允许接收用户名列表的形式
+※ 借助 get_homepage 实现自动化使用插值法估算月度新增账号
 
 
 ## 更新日志

@@ -45,7 +45,9 @@ def transfer_money(client, username, amount, memo=""):
                "Referer": "https://bbs.kfpromax.com/hack.php?H_name=bank"}
     data = gbk_form({"action": "virement", "pwuser": username, "to_money": str(amount), "memo": memo})
     resp = client.session.post(headers["Referer"], data=data, timeout=15, headers=headers)
-    return resp.content.decode("gbk", errors="replace")
+    text = resp.content.decode("gbk", errors="replace")
+    m = re.search(r"(?:提示信息|操作提示)<br[^>]*>(.+?)<br", text, re.S)
+    return re.sub(r"<[^>]+>", "", m.group(1)).strip() if m else ""
 
 
 def upload_image(path):
