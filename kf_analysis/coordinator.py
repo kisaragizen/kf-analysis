@@ -1,4 +1,4 @@
-import logging, time
+import logging, sqlite3, time
 from bs4 import BeautifulSoup
 from . import analyser, utils
 from .service import Client, Storage
@@ -149,10 +149,19 @@ class KFanalysis:
                       "complete", "keyword_list", "hidden_content")
         return {"topic": topic, "replies": [{k: r[k] for k in reply_keys} for r in data["reply_list"]]}
 
-    def get_homepage(self, uid, sf):
+    def get_homepage(self, uid, sf, db=False):
         url = f"https://bbs.kfpromax.com/profile.php?action=show&uid={uid}&sf={sf}"
         response = self.client.get(url)
         if response.status_code != 200:
             logger.error(f"用户主页 (uid={uid}, sf={sf}) 访问失败，状态码 {response.status_code}")
             return False
-        return analyser.parse_profile_page(BeautifulSoup(response.content, "lxml"))
+        data = analyser.parse_profile_page(BeautifulSoup(response.text, "lxml"))
+        if db:
+            with sqlite3.connect("hp.db") as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS homepage "
+                             "(uid INTEGER PRIMARY KEY, username TEXT, sf TEXT, regdate TEXT, ok INTEGER)")
+                regdate = data.get("注册时间", "") if data else ""
+                username = data.get("用户名称", "") if data else ""
+                conn.execute("INSERT OR REPLACE INTO homepage VALUES (?,?,?,?,?)",
+                             (uid, username, sf, regdate, 1 if regdate else 0))
+        return data

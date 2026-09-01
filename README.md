@@ -1,9 +1,10 @@
 # kf-analysis
 
-绯月论坛活跃度数据获取与分析项目 v2.1.0，在 v2.0.0 新架构的基础上新增论坛动作支持（发帖/编辑/购买/转账）。  
+绯月论坛活跃度数据获取与分析项目，v2.0.0 架构重构完成。  
+v2.1.0 支持了部分论坛动作（发帖/编辑/买贴/转账），v2.2.0 完成了对任意 uid 注册时间的建模估算。  
 数据获取支持 CLI 与 Python API 两种调用方式，数据持久化采用 SQLite，数据分析由 activity_analysis.ipynb 完成。  
 移除原有硬编码逻辑，支持板块级与主题级增量抓取，并大幅优化页面解析逻辑与数据查询性能。  
-经 212,355 条回复数据实测，数据抓取与入库结果符合预期（2026-08-23 时数据）。  
+经 216,389 条回复数据实测，数据抓取与入库结果符合预期（2026-09-01 时数据）。  
 
 * 本项目运行在 bbs.kfpromax.com 域名下。  
 * 本项目的文件内注释比 README.md 更详细。
@@ -43,7 +44,7 @@ get usernames <link> [--dedup] # 输出指定主题的参与用户列表；--ded
 get homepage <link>            # 输出指定用户的主页信息
 ```
 
-**buy / transfer 命令**  
+**buy / transfer 命令**
 ```text
 buy <link> [--buy]                                             # 主题购买功能
 transfer <username>[, <username>...] <amount> [--memo <附言>]  # 贡献转账功能
@@ -86,10 +87,11 @@ status = analyser.check_page_status(soup)                   # 判断主题状态
 info = analyser.parse_topic_info(soup, tid, sf)             # 根据第一页的 soup 解析主题头信息并返回 dict
 replies = analyser.parse_replies([html_text], tid, sf)      # 传入 html_text 列表，解析所有楼层信息并返回 dict
 ```
-以上仅为简易调用示例，完整说明请参阅 `analyser.py` 中的函数注释。  
-`analyser` 包含的其他函数：  
-* `parse_board_page(soup)` → 解析板块页，返回该页所有主题的 URL 列表。  
-* `parse_profile_page(soup)` → 解析用户主页信息，返回 dict。
+
+* `analyser` 包含的其他函数：
+    * `parse_board_page(soup)` → 解析板块页，返回该页所有主题的 URL 列表。
+    * `parse_profile_page(soup)` → 解析用户主页信息，返回 dict。
+* 以上仅为简易调用示例，更多说明请参阅 `analyser.py` 相关注释。
 
 **KFanalysis 封装类（`coordinator`）**  
 `KFanalysis` 对数据获取、解析及数据库操作进行统一封装。  
@@ -109,22 +111,26 @@ kf.fetch_onetopic(tid, sf, force=False, disp=False)  # ↔ fetch topic
 
 data = kf.get_topic_json(tid, sf)                    # ↔ get json
 names = kf.get_topic_usernames(tid, sf, dedup=False) # ↔ get usernames
-info = kf.get_homepage(uid, sf)                      # ↔ get homepage
+info = kf.get_homepage(uid, sf, db=False)            # ↔ get homepage
 stats = kf.storage.stats()                           # ↔ state
 ```
-返回值约定（完整说明请参阅 `coordinator.py` 中的函数注释）：  
-`fetch_onetopic()`：  
-* `None`：无增量。  
-* `False`：访问失败。  
-* `"closed"`：主题已关闭。  
-* `"deleted"`：主题已删除。  
-* `dict`：获取成功，返回 `topic_info`；增量时会附带 `incremental` 标记。  
-主题被关闭或删除时，若数据库中尚无该主题，则会插入对应的占位条目。  
-帖子不存在或安全码错误时，记录至 `error.log`，不写入数据库。
+
+* `fetch_all` 是多次 `fetch_board` 的调用，
+* `fetch_board` 是多次 `fetch_onetopic` 的调用。
+* `fetch_onetopic` 相关说明：
+    * 返回值为 `dict` 时代表获取成功（增量更新时自动附带 `incremental` 标记）；
+    *  `None` 无增量，`False` 访问失败，`"closed"` 主题关闭，`"deleted"` 主题删除；
+    * 主题被关闭或删除时，若数据库中尚无该主题则插入对应的占位条目；
+    * 若数据库中存在该主题，秉持数据完整原则不进行覆盖。
+    * 访问失败可能原因为安全码错误/帖子不存在/网络限制/服务器拒绝；
+    * 访问失败不对数据库进行任何写入，错误信息也将被记录至 `error.log`。
+* `get_homepage` 相关说明：
+    * db=False 时，仅返回获取到的 dict；
+    * db=True 时，将信息同步写入 hp.db 中。
+    * 该函数没有增量更新功能，使用时需要前置检测。
 
 **Actions 封装类（`actions`）**  
-论坛动作的封装，包含功能：发帖/编辑/原始内容获取/购买/转账。  
-其中前三种功能只提供包内函数调用方式。
+发帖/编辑/原始内容获取/购买/转账（前三种功能暂不考虑实现 CLI 调用）。
 ```python
 from kf_analysis.actions import Actions, buy_topic, transfer_money
 
@@ -137,8 +143,10 @@ price = buy_topic(acts.client, tid, sf)                   # 查价：价格 / -1
 buy_topic(acts.client, tid, sf, "buy")                    # 执行购买，失败返回 None
 transfer_money(acts.client, "username", 0.5, memo="附言") # 银行转账
 ```
-需要特别注意到是，目前 `post_topic` 函数只支持**没有强制二级分类的普通板块**。  
-帖子原始内容是指帖子 bbocde 标签尚未经服务器转义的原始文本，需要对目标贴子的编辑权限。
+
+* 目前 `post_topic` 函数只支持**没有强制二级分类的普通板块**。
+* 帖子原始内容指帖子 bbcode 标签尚未经服务器转义的原始文本，需要对目标贴子的编辑权限。
+* **以下功能未列出**：`upload_image`, `search_user_sf`, `search_topic_sf`。
 
 **其他重要函数**  
 ```python
@@ -150,8 +158,8 @@ replies, topics = analytics.query_data(start_time, end_time, username, board_nam
 
 
 ## 数据库结构
-sqlite3，WAL 模式，两张表（topic 表与 reply 表）。  
-本项目中，主题第零楼也视作回复，楼层号为0。
+kf.db 分为 topic 与 reply 两张表，topic 表只存储主题头信息，主题楼则被视作楼层数为零的回复。  
+`image_list`, `hidden_content`, `keyword_list` 以 JSON 形式存库，由 `query_data` 函数读取时解析回 list。
 ```
 topic 表：
 topic_id    INTEGER PRIMARY KEY,   #主题链接 tid（帖号）
@@ -164,7 +172,6 @@ topic_time  INTEGER,               #开帖时间 timestamp(unix)
 record_time INTEGER,               #信息获取时间 timestamp(unix)
 status      TEXT                   #active 正常 / closed 被关 / deleted 被删
 ```
-
 ```
 reply 表：
 reply_id        TEXT,        #回复编号（主楼=TPC<tid>，回复=PID<pid>）
@@ -185,13 +192,22 @@ hidden_content  TEXT,        #已解锁的权限框内容，JSON
 keyword_list    TEXT,        #引用的用户名关键词，JSON
 PRIMARY KEY (topic_id, reply_id)
 ```
-※ image_list / hidden_content / keyword_list 以 JSON 字符串存库，使用 query_data 函数读取时解析回 list。
+
+hp.db 是 `get_homepage` 函数在 db=True 时的存储对象。
+```
+homepage 表：
+uid      INTEGER PRIMARY KEY,   #用户主页 uid
+sf       TEXT,                  #用户主页 sf
+username TEXT,                  #用户名称
+regdate  TEXT,                  #注册日期
+ok       INTEGER                #是否获取成功：1 成功；0 失败
+```
 
 
 ## 数据分析
 数据分析部分依赖本项目的 `analytics` 模块，由 `activity_analysis.ipynb` 完成。
 
-* **Cell 1**：说明 `query_data` 函数及其参数。
+* **Cell 1**：`query_data` 函数及其参数的说明
 * **Cell 2**：调用 `query_data`，从数据库中读取符合指定条件的全部主题及回复数据。
 * **Cell 3**：总体活跃度统计与可视化，包括：
      * 总活跃主题数及日均值；
@@ -201,8 +217,23 @@ PRIMARY KEY (topic_id, reply_id)
      * 每日发言用户数折线图；
      * 各板块活跃主题数、新增回复数柱状图。
 * **Cell 4**：用户活跃度排行，包括回复数量、回复字节数及活跃天数比例。
-* **Cell 5**：主题热度排行，包括新增回复数量、讨论持续天数；自动识别并标记 HB 相关主题。
-* **Cell 6**：资源主题数量排行（总体 / 自购）、求助区实质优秀主题数量排行，以及求助区情况概述。
+* **Cell 5**：将 Cell 4 所得数据渲染为有颜色分区的表格图像。
+* **Cell 6**：账号新增与留存分析：前置单元A，将未入库的账号补入hp.db以提升分析精度。
+* **Cell 7**：账号新增与留存分析：前置单元B，统计时段回复数量分布（假设注册数量分布权重）。
+* **Cell 8**：账号新增与留存分析：根据 Cell 7 所得权重估算时刻T用户数量并输出天粒度柱状图。
+* **Cell 9**：统计期间活跃账号的留存情况（注册年份分布）。
+* **Cell A**：主题热度排行，包括新增回复数量、讨论持续天数。
+* **Cell B**：资源主题贡献排行，分为整体与自购两部分。
+
+```
+关于任意uid注册时间的建模估算（复制自cell8）：
+假设我们有一张24小时热度分布权重表，表中元素相加为1
+当已知点数量为1，代表将一天分成了2份，接下来我们需要在权重表中找到从左向右加和到恰好等于50%的点
+当已知点数量为n，代表将一天分成了n+1份，接下来我们需要在权重表中分别找到从左向右加和恰好等于k/(n+1)处的点
+（实际上是先定位到小时然后在小时内线性插值，关于此处精度的改善可以从权重表入手，在上一个cell提高权重表时间粒度，但这也意味着更长的计算时间）
+为避免重复计算，先找出单日已知点数量的最大值N，然后前置地分别算出当已知点数量为1到N时，每个点的对应时刻，后面只需要查表赋值就好
+为了得到T时刻的uid最大值，我们需要找到已知点中早于T与晚于T的最近点，然后根据Ut=Ua+(Ub-Ua)×Wa得到结果，Wa指时刻A到时刻T占时刻A到时刻B的权重比例
+```
 
 绘图函数：
 ```python
@@ -211,6 +242,7 @@ from kf_analysis import analytics
 analytics.output_plot_bar(x, y, title, save, annotate, color, figsize, rotation)                          # 柱状图
 analytics.output_plot_line(x, y, title, save, annotate, color, figsize, rotation)                         # 折线图
 analytics.calendar_heatmap(day_counts, start, end, title, save, cmap, count_label, figsize, cell_height)  # 热力图
+analytics.plot_daily_bars(daily, title, save, color, figsize, ylim)                                       # 每日新增柱状图
 ```
 
 
@@ -222,22 +254,21 @@ kf_analysis/
 ├── coordinator.py        # 行为编排
 ├── service.py            # 网络请求与数据库操作
 ├── analyser.py           # 页面解析
-├── actions.py            # 论坛动作（发帖/编辑/购买/转账/原始内容获取）
-├── analytics.py          # query_data 函数与绘图函数
+├── actions.py            # 论坛动作
+├── analytics.py          # 数据库查询与绘图
 └── utils.py              # 杂项工具
 activity_analysis.ipynb   # 数据分析笔记本
-error.log                 # 错误日志（自动生成）
-json_result.txt           # get json 命令输出（自动生成）
-kf.db                     # 默认数据库（自动生成）
+error.log                 # 错误日志·自动生成
+kf.db                     # 默认数据库·自动生成
+hp.db                     # 主页信息数据库·自动生成
 ```
 
 
-## 更新展望
-※ 借助 get_homepage 实现自动化使用插值法估算月度新增账号
-
-
 ## 更新日志
-2026.08.23 update:   新增论坛动作支持（v2.1.0）  
-2026.08.14 update:   架构重构（v2.0.0）  
-2025.06.07 update:   优化主数据结构（v1.1.0）  
-2025.05.11 original: 初始版本（v1.0.0）
+* 2026.09.01 v2.2.0 update:   任意UID注册时间建模估算的实现
+* 2026.08.23 v2.1.0 update:   发帖/编辑/买贴/转账功能的实现
+    * 2026.08.24 v2.1.1 update: gbk_len函数修复；upload_image函数实现
+    * 2026.08.26 v2.1.2 update: 转账功能CLI调用支持多用户名；转账成功判断逻辑修复
+* 2026.08.14 v2.0.0 update:   完全重构
+* 2025.06.07 v1.1.0 update:   主数据结构优化
+* 2025.05.11 v1.0.0 original: 初始版本

