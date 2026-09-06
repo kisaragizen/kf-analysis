@@ -60,9 +60,49 @@ def upload_image(path):
     return data["data"]["links"]["url"]
 
 
+def send_message(client, username, title, content, save=False):
+    # 私信发送函数，save=True 时将同步保存到发件箱中
+    url = "https://bbs.kfpromax.com/message.php"
+    data = {"action": "write", "step": "2", "pwuser": username,
+            "msg_title": title, "atc_content": content,
+            "Submit": "提 交", **({"ifsave": "Y"} if save else {})}
+    headers = {"Content-Type": "application/x-www-form-urlencoded",
+               "Referer": f"{url}?action=write"}
+    resp = client.session.post(url, data=gbk_form(data), headers=headers, timeout=15)
+    text = resp.content.decode("gbk", errors="replace")
+    if "操作完成" in text: return {"ok": True, "message": "操作完成"}
+    m = re.search(r"操作提示<br[^>]*>(.+?)<br", text, re.S)
+    return {"ok": False, "message": re.sub(r"<[^>]+>", "", m.group(1)).strip() if m else ""}
+
+
+def search_user_hp(client, username):
+    # 用于已知某用户 username 时借助私信功能直接获取其 uid 和 sf
+    # 正常流程下，本函数产生的私信会被自动清理，被探测方亦不可见，进而无法察觉本次探测
+    base = "https://bbs.kfpromax.com/message.php"
+    headers = {"Content-Type": "application/x-www-form-urlencoded", "Referer": base}
+    def hp_row(page):
+        soup = BeautifulSoup(client.get(f"{base}?action={page}").content, "lxml")
+        return next((tr for tr in soup.find_all("tr") if tr.find("a", href=re.compile(r"read\w+&mid=\d+"))), None)
+    def del_one(mid, where):
+        data = {"delid[]": str(mid), "towhere": where, "action": "del"}
+        client.session.post(base, data=gbk_form(data), headers=headers, timeout=15)
+    title = f"sf-hp-{int(time.time())}"
+    result = send_message(client, username, title, "sent by kf-analysis", save=True)
+    if not result["ok"]: return {"ok": False, "uid": None, "sf": None, "message": result["message"]}
+    tr, tr2 = hp_row("sendbox"), hp_row("scout")
+    if tr is None or tr2 is None: return {"ok": False, "uid": None, "sf": None, "message": "探测私信自动清理失败"}
+    link = next((a for a in tr.find_all("a", href=re.compile(r"profile\.php\?action=show&uid=\d+&sf=[0-9a-fA-F]+"))
+                 if a.get_text(strip=True) == username), None)
+    if link is None: return {"ok": False, "uid": None, "sf": None, "message": "探测私信自动清理失败"}
+    uid, sf = re.search(r"uid=(\d+)&sf=([0-9a-fA-F]+)", link["href"]).groups()
+    mid = int(tr.find("a", href=re.compile(r"readsnd&mid=\d+"))["href"].split("mid=")[1])
+    mid2 = int(tr2.find("a", href=re.compile(r"readscout&mid=\d+"))["href"].split("mid=")[1])
+    del_one(mid, "sendbox"); del_one(mid2, "scout")
+    return {"ok": True, "uid": int(uid), "sf": sf, "message": "全流程执行成功"}
+
+
 def search_user_sf(client, uid, start):
-    # 用户主页 sf 暴力搜索，用于只知道目标 uid 的情况
-    # 如果已知用户名，可以使用发件箱功能直接获取目标 uid 和 sf
+    # 用于只知道某用户 uid 时暴力搜索其 sf
     cur = int(start, 16)
     with open("sf_search.txt", "a", encoding="utf-8", buffering=1) as f:
         while True:
@@ -79,7 +119,7 @@ def search_user_sf(client, uid, start):
 
 
 def search_topic_sf(client, tid, start):
-    # 主题链接 sf 暴力搜索
+    # 用于只知道某主题 tid 时暴力搜索其 sf
     cur = int(start, 16)
     with open("sf_search.txt", "a", encoding="utf-8", buffering=1) as f:
         while True:

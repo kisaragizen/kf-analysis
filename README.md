@@ -105,10 +105,8 @@ kf = KFanalysis(cfg, db_path="kf.db")
 
 kf.fetch_all(force=False)                            # ↔ fetch all
 kf.fetch_board(5, force=False)                       # ↔ fetch board 5
-
 tid, sf = utils.split_topic_link(link)               # 从链接中拆出帖号与安全码
 kf.fetch_onetopic(tid, sf, force=False, disp=False)  # ↔ fetch topic
-
 data = kf.get_topic_json(tid, sf)                    # ↔ get json
 names = kf.get_topic_usernames(tid, sf, dedup=False) # ↔ get usernames
 info = kf.get_homepage(uid, sf, db=False)            # ↔ get homepage
@@ -130,18 +128,20 @@ stats = kf.storage.stats()                           # ↔ state
     * 该函数没有增量更新功能，使用时需要前置检测。
 
 **Actions 封装类（`actions`）**  
-发帖/编辑/原始内容获取/购买/转账（前三种功能暂不考虑实现 CLI 调用）。
+发帖/编辑/原始内容获取/购买/转账/私信发送与用户主页探测（前三种功能暂不考虑实现 CLI 调用）。
 ```python
-from kf_analysis.actions import Actions, buy_topic, transfer_money
+from kf_analysis import actions
 
-acts = Actions(config)                                    # config 可缺省，缺省时会从配置文件读
-acts.post_reply(tid, sf, "正文")                          # 回复贴发帖函数
-acts.post_topic(fid, "正文", title="标题")                # 主题帖发帖函数
-acts.edit_post(tid, sf, pid, article, content="新正文")   # 帖子编辑函数
-data = acts.get_post_content(tid, sf, pid, article)       # 获取帖子原始内容
-price = buy_topic(acts.client, tid, sf)                   # 查价：价格 / -1 已购买 / -2 无可购买内容
-buy_topic(acts.client, tid, sf, "buy")                    # 执行购买，失败返回 None
-transfer_money(acts.client, "username", 0.5, memo="附言") # 银行转账
+acts = actions.Actions(config)                                # config 可缺省，缺省时会从配置文件读
+acts.post_reply(tid, sf, "正文")                              # 回复贴发帖函数
+acts.post_topic(fid, "正文", title="标题")                    # 主题帖发帖函数
+acts.edit_post(tid, sf, pid, article, content="新正文")       # 帖子编辑函数
+data = acts.get_post_content(tid, sf, pid, article)           # 获取帖子原始内容
+price = actions.buy_topic(acts.client, tid, sf)               # 查价：价格 / -1 已购买 / -2 无可购买内容
+actions.buy_topic(acts.client, tid, sf, "buy")                # 执行购买，失败返回 None
+actions.transfer_money(acts.client, "username", 0.5, memo="附言") # 银行转账
+actions.send_message(acts.client, "username", "标题", "正文", save=True)  # 私信发送，save=True 时同步保存到发件箱
+result = actions.search_user_hp(acts.client, "username")      # 已知用户名时探测对应用户的 uid 与 sf
 ```
 
 * 目前 `post_topic` 函数只支持**没有强制二级分类的普通板块**。
@@ -266,6 +266,7 @@ hp.db                     # 主页信息数据库·自动生成
 
 ## 更新日志
 * 2026.09.01 v2.2.0 update:   任意UID注册时间建模估算的实现
+    * 2026.09.07 v2.2.1 update: 支持私信发送与已知用户名时探测uid/sf
 * 2026.08.23 v2.1.0 update:   发帖/编辑/买贴/转账功能的实现
     * 2026.08.24 v2.1.1 update: gbk_len函数修复；upload_image函数实现
     * 2026.08.26 v2.1.2 update: 转账功能CLI调用支持多用户名；转账成功判断逻辑修复

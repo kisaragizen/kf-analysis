@@ -1,7 +1,7 @@
 [project]
 name = "kf-analysis"
-version = "2.2.0"
-description = "KF论坛活跃度数据获取程序"
+version = "2.2.1"
+description = "KF论坛活跃度分析与数据获取程序"
 requires-python = ">=3.12"
 dependencies = [
     "requests",
