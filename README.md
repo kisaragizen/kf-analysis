@@ -1,10 +1,11 @@
 # kf-analysis
 
-绯月论坛活跃度数据获取与分析项目，v2.0.0 架构重构完成。  
-v2.1.0 支持了部分论坛动作（发帖/编辑/买贴/转账），v2.2.0 完成了对任意 uid 注册时间的建模估算。  
-数据获取支持 CLI 与 Python API 两种调用方式，数据持久化采用 SQLite，数据分析由 activity_analysis.ipynb 完成。  
-移除原有硬编码逻辑，支持板块级与主题级增量抓取，并大幅优化页面解析逻辑与数据查询性能。  
-经 216,389 条回复数据实测，数据抓取与入库结果符合预期（2026-09-01 时数据）。  
+绯月论坛活跃度数据获取与分析项目。  
+v2.0.0 架构重构完成；v2.1.0 支持了部分论坛动作（发帖/编辑/私信/买贴/转账）；  
+v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0 新增了持续监控功能。  
+绝大部分功能同时支持 CLI 与包内函数两种调用形式（小部分风险论坛动作只支持包内函数调用）。  
+支持板块级与主题级增量抓取；实现“数据获取→数据分析→发帖”全流程自动化接口。  
+经 216,389 条回复数据实测，数据抓取与入库结果符合预期（2026-09-01 时数据）。
 
 * 本项目运行在 bbs.kfpromax.com 域名下。  
 * 本项目的文件内注释比 README.md 更详细。
@@ -18,102 +19,107 @@ v2.1.0 支持了部分论坛动作（发帖/编辑/买贴/转账），v2.2.0 完
 
 
 ## CLI 调用
-以下命令均省略前缀 `python -m kf_analysis`。  
+以下命令均已省略前缀 `python -m kf_analysis`。  
+（注意实际使用时不可省略该前缀）
 
-CLI 命令主要分为三类：  
-* `fetch`：获取并解析数据，并将结果写入默认或指定的数据库。  
-* `get`：获取并解析数据，但不写入数据库，而是将结果输出到屏幕或写入文件。  
-* `buy`、`transfer`：售价主题查价/购买；论坛银行转账。  
-（并非全部论坛动作都有 CLI 调用支持，这是主动设计，详见**包内函数调用**章节）
+CLI 命令主要分为四类：  
+* `get`：获取并解析数据，将结果输出到屏幕或写入文本文件。  
+* `fetch`：获取并解析数据，将结果写入默认的或指定的数据库。  
+* `monitor`：对指定对象进行持续监控，按固定周期循环增量抓取。  
+* `buy`、`transfer`：主题查价/购买；贡献转账。  
+出于风险性与实用性考量，并未支持所有论坛动作的 CLI 调用，  
+更多功能详见本文**包内函数调用**章节。
 
 **fetch 类命令**
 ```text
-fetch all [--force] [--db <路径>]             # 获取所有板块的数据
-fetch board <fid> [--force] [--db <路径>]     # 获取指定板块的数据
-fetch topic <link>... [--force] [--file] [--db <路径>]    # 获取指定主题的数据
-                                                          # 多个链接以空格分隔，各自使用引号包裹
-                                                          # --file 指定包含主题链接的文件，每行一个链接
+fetch all [--force] [--db]                       # 获取所有板块的数据
+fetch board <fid> [--force] [--db]               # 获取指定板块的数据
+fetch topic <link>... [--force] [--file] [--db]  # 获取指定主题的数据
 ```
-* `--force`：强制执行全量抓取；不指定时执行普通增量抓取。  
-* `--db <路径>`：指定数据写入的数据库；不指定时使用默认数据库 `kf.db`。
+
+* `--force`：强制全量更新；不指定该参数时仅为增量更新。  
+* `--db`：指定数据将写入哪个数据库，不指定该参数时使用默认数据库。  
+* `fetch topic` 支持两种方式传递一个或多个链接：  
+    * 以命令行参数指定时，多个链接间需以空格分隔并各自使用引号包裹。  
+    * 以文件参数指定时，要注意每行一个链接。  
 
 **get 类命令**
 ```text
-get json <link>                # 解析指定主题，并将完整数据写入 json_result.txt
-get usernames <link> [--dedup] # 输出指定主题的参与用户列表；--dedup 指定是否去重
-get homepage <link>            # 输出指定用户的主页信息
+get json <link>                 # 获取指定主题的数据
+get usernames <link> [--dedup]  # 输出参与指定主题的用户名列表
+get homepage <link>             # 输出指定用户的主页信息
 ```
+
+* `get json` 命令会将获取到的数据写入同目录的文本文件。  
+* `--dedup`：指定是否对获取到的用户名列表进行去重（保留首次出现的顺序）。
+
+**monitor 命令**
+```text
+monitor topic <link>... [--file] [--store] [--db] [--gap] [--criteria]
+```
+
+* `--gap`：决定监控周期（秒），缺省值为 300。  
+* `--store`：决定是否在监控的同时将增量数据存入数据库，缺省时仅监视。  
+* `--criteria`：判定依据列表，以半角逗号分隔参数的单字符串。  
+* 默认规则判断新增回复是否由特定用户发出，此时 `criteria` 参数用于传递用户名列表。
 
 **buy / transfer 命令**
 ```text
-buy <link> [--buy]                                             # 主题购买功能
-transfer <username>[, <username>...] <amount> [--memo <附言>]  # 贡献转账功能
+buy <link> [--buy]                          # 主题购买功能
+transfer <username_list> <amount> [--memo]  # 贡献转账功能
 ```
-* `buy`：仅当指定 `--buy` 参数时才会执行购买，否则执行价格查询。  
-* `transfer`：向一个或多个账号转账贡献，多个用户名以半角逗号分隔。
+
+* `--buy`：仅当指定该参数时执行购买，否则执行价格查询。  
+* `<username_list>`：以半角逗号分隔用户名的单字符串。
 
 **查询数据库当前状态**
 ```text
-state [--db <路径>]    # 返回数据库当前状态以及错误日志的最新十行
+state [--db]  # 返回数据库当前状态
 ```
 
-**调用示例**
+**部分调用示例**
 ```
-python -m kf_analysis fetch all
-python -m kf_analysis fetch board 5
-python -m kf_analysis fetch topic "https://bbs.kfpromax.com/read.php?tid={$TID}&sf={$SF}"
-python -m kf_analysis fetch topic --file links.txt
-python -m kf_analysis get json "https://bbs.kfpromax.com/read.php?tid={$TID}&sf={$SF}"
-python -m kf_analysis get usernames "https://bbs.kfpromax.com/read.php?tid={$TID}&sf={$SF}"
-python -m kf_analysis get homepage "https://bbs.kfpromax.com/profile.php?action=show&uid={$UID}&sf={$SF}"
-python -m kf_analysis buy "https://bbs.kfpromax.com/read.php?tid={$TID}&sf={$SF}" --buy
-python -m kf_analysis transfer "{$USERNAME1}, {$USERNAME2}" 0.5 --memo "{$MEMO}"
-python -m kf_analysis state
+python -m kf_analysis fetch topic "https://bbs.kfpromax.com/read.php?tid=00000&sf=fff"
+python -m kf_analysis get json "https://bbs.kfpromax.com/read.php?tid=00000&sf=fff"
+python -m kf_analysis transfer "user1, user2, user3" 0.5 --memo "thanks~"
+python -m kf_analysis monitor topic --file links.txt --criteria "user1, user2, user3"
 ```
 
 
 ## 包内函数调用
-包内调用分为三个层级：**`analyser` 纯解析函数**、**`KFanalysis` 封装类**与 **`Actions` 封装类**。
 
 **纯解析函数（`analyser`）**  
 `analyser` 提供与网络请求、数据库无关的纯解析函数。  
-调用方负责准备页面原始数据，并根据需要自行处理解析结果。
 ```python
-from bs4 import BeautifulSoup
 from kf_analysis import analyser
 
-soup = BeautifulSoup(html_text, "lxml")                     # html_text 为页面原始字节
-status = analyser.check_page_status(soup)                   # 判断主题状态：normal / closed / deleted / incorrect
-info = analyser.parse_topic_info(soup, tid, sf)             # 根据第一页的 soup 解析主题头信息并返回 dict
-replies = analyser.parse_replies([html_text], tid, sf)      # 传入 html_text 列表，解析所有楼层信息并返回 dict
+analyser.check_page_status(soup)                                      # 判断主题的可访问性
+analyser.parse_topic_info(soup, topic_id, topic_sf)                   # 解析某主题的头信息并返回 dict
+analyser.parse_replies(page_list, topic_id, topic_sf, username_dict)  # 解析所有页面的回复并返回 list
+analyser.parse_board_page(soup)                                       # 解析板块页主题链接并返回 list
+analyser.parse_profile_page(soup)                                     # 解析用户主页信息，返回 dict
 ```
 
-* `analyser` 包含的其他函数：
-    * `parse_board_page(soup)` → 解析板块页，返回该页所有主题的 URL 列表。
-    * `parse_profile_page(soup)` → 解析用户主页信息，返回 dict。
-* 以上仅为简易调用示例，更多说明请参阅 `analyser.py` 相关注释。
+* 详细说明见 `analyser.py` 对应位置的注释。
 
 **KFanalysis 封装类（`coordinator`）**  
 `KFanalysis` 对数据获取、解析及数据库操作进行统一封装。  
-**CLI 调用只是 `KFanalysis` 的薄封装**，与 Python API 使用相同的业务逻辑。
 ```python
 from kf_analysis import utils
 from kf_analysis.coordinator import KFanalysis
 
 cfg = utils.load_config()
 kf = KFanalysis(cfg, db_path="kf.db")
-
 kf.fetch_all(force=False)                            # ↔ fetch all
-kf.fetch_board(5, force=False)                       # ↔ fetch board 5
-tid, sf = utils.split_topic_link(link)               # 从链接中拆出帖号与安全码
-kf.fetch_onetopic(tid, sf, force=False, disp=False)  # ↔ fetch topic
+kf.fetch_board(fid, force=False)                     # ↔ fetch board
+kf.fetch_onetopic(tid, sf, force=False)              # ↔ fetch topic
 data = kf.get_topic_json(tid, sf)                    # ↔ get json
 names = kf.get_topic_usernames(tid, sf, dedup=False) # ↔ get usernames
 info = kf.get_homepage(uid, sf, db=False)            # ↔ get homepage
 stats = kf.storage.stats()                           # ↔ state
 ```
 
-* `fetch_all` 是多次 `fetch_board` 的调用，
+* `fetch_all` 是多次 `fetch_board` 的调用；
 * `fetch_board` 是多次 `fetch_onetopic` 的调用。
 * `fetch_onetopic` 相关说明：
     * 返回值为 `dict` 时代表获取成功（增量更新时自动附带 `incremental` 标记）；
@@ -128,84 +134,106 @@ stats = kf.storage.stats()                           # ↔ state
     * 该函数没有增量更新功能，使用时需要前置检测。
 
 **Actions 封装类（`actions`）**  
-发帖/编辑/原始内容获取/购买/转账/私信发送与用户主页探测（前三种功能暂不考虑实现 CLI 调用）。
+发主题/发回复/发私信/帖子编辑/获取原始内容/买贴/转账/主页链接探测。
 ```python
 from kf_analysis import actions
 
-acts = actions.Actions(config)                                # config 可缺省，缺省时会从配置文件读
-acts.post_reply(tid, sf, "正文")                              # 回复贴发帖函数
-acts.post_topic(fid, "正文", title="标题")                    # 主题帖发帖函数
-acts.edit_post(tid, sf, pid, article, content="新正文")       # 帖子编辑函数
-data = acts.get_post_content(tid, sf, pid, article)           # 获取帖子原始内容
-price = actions.buy_topic(acts.client, tid, sf)               # 查价：价格 / -1 已购买 / -2 无可购买内容
-actions.buy_topic(acts.client, tid, sf, "buy")                # 执行购买，失败返回 None
-actions.transfer_money(acts.client, "username", 0.5, memo="附言") # 银行转账
-actions.send_message(acts.client, "username", "标题", "正文", save=True)  # 私信发送，save=True 时同步保存到发件箱
-result = actions.search_user_hp(acts.client, "username")      # 已知用户名时探测对应用户的 uid 与 sf
+acts = actions.Actions(config)
+acts.post_reply(tid, sf, content, keywords)                        # 回复发帖
+acts.post_topic(fid, content, title, keywords)                     # 主题发帖
+acts.edit_post(tid, sf, pid, article, content, title, keywords)    # 帖子编辑
+acts.get_post_content(tid, sf, pid, article)                       # 原始内容获取
+actions.buy_topic(client, topic_id, topic_sf, mode)                # 主题购买
+actions.transfer_money(client, username, amount, memo)             # 贡献转账
+actions.send_message(client, username, title, content, save)       # 私信发送
+actions.search_user_hp(client, username)                           # 主页链接探测
 ```
 
+* 详细说明见 `actions.py` 对应位置的注释。
 * 目前 `post_topic` 函数只支持**没有强制二级分类的普通板块**。
-* 帖子原始内容指帖子 bbcode 标签尚未经服务器转义的原始文本，需要对目标贴子的编辑权限。
 * **以下功能未列出**：`upload_image`, `search_user_sf`, `search_topic_sf`。
+
+**持续监控（`monitor`）**  
+```python
+from kf_analysis.monitor import monitor_topic, monitor_event, monitor_action
+
+monitor_topic(config, links, gap, criteria, store, db_path, event, action)  # 持续监控主题
+monitor_event(data, criteria)                                               # 命中判定函数，可自定义行为
+monitor_action(matches)                                                     # 命中执行函数，可自定义行为
+```
+
+* `event` 与 `action` 缺省时分别使用 `monitor_event` 与 `monitor_action`。
+* `monitor_event` 默认命中条件：当检测到新增回复中存在特定用户名的发帖时。
+* `monitor_action` 默认命中行为：蜂鸣器提醒。
 
 **其他重要函数**  
 ```python
 from kf_analysis import analytics
-replies, topics = analytics.query_data(start_time, end_time, username, board_name, db_path, reverse)
+
+analytics.query_data(start_time, end_time, username, board_name, db_path, reverse)
 # 每个参数都是可缺省的，全部缺省则读入整个数据库，否则按照参数指定的范围读取数据
 # 返回值有两个，分别是散装回复列表与按主题聚合的回复列表
 ```
 
 
 ## 数据库结构
-kf.db 分为 topic 与 reply 两张表，topic 表只存储主题头信息，主题楼则被视作楼层数为零的回复。  
-`image_list`, `hidden_content`, `keyword_list` 以 JSON 形式存库，由 `query_data` 函数读取时解析回 list。
+kf.db 分为 topic 与 reply 两张表。
 ```
 topic 表：
-topic_id    INTEGER PRIMARY KEY,   #主题链接 tid（帖号）
-topic_sf    TEXT,                  #主题链接 sf （安全码）
-board_id    INTEGER,               #所属板块 fid
-board_name  TEXT,                  #所属板块名称
-title       TEXT,                  #主题标题
-reply_count INTEGER,               #回复量（包含主题第零楼）
-topic_time  INTEGER,               #开帖时间 timestamp(unix)
-record_time INTEGER,               #信息获取时间 timestamp(unix)
-status      TEXT                   #active 正常 / closed 被关 / deleted 被删
+topic_id    INTEGER PRIMARY KEY,   # tid
+topic_sf    TEXT,                  # sf
+board_id    INTEGER,               # 所属板块fid
+board_name  TEXT,                  # 所属板块名称
+title       TEXT,                  # 标题
+reply_count INTEGER,               # 回复量
+topic_time  INTEGER,               # 开帖时间
+record_time INTEGER,               # 获取时间
+status      TEXT                   # 可访问性
 ```
 ```
 reply 表：
-reply_id        TEXT,        #回复编号（主楼=TPC<tid>，回复=PID<pid>）
-topic_id        INTEGER NOT NULL REFERENCES topic(topic_id),   #所属主题 tid
-topic_sf        TEXT,        #所属主题 sf
-floor           INTEGER,     #楼层号
-username        TEXT,        #回帖人用户名
-homepage_id     INTEGER,     #用户主页 uid（禁言/删号用户为空）
-homepage_sf     TEXT,        #用户主页 sf （即便被禁言/删号也非空）
-reply_box_color TEXT,        #回复框颜色
-reply_time      INTEGER,     #回帖时间
-record_time     INTEGER,     #信息获取时间
-reply_text      TEXT,        #紧凑化正文（若被禁言为 NULL/若被隐藏为提示信息）
-status          TEXT,        #active 正常 / hidden 隐藏 / banned 禁言或删号
-image_list      TEXT,        #图片 url 列表，JSON 数组字符串
-complete        INTEGER,     #权限框是否全部解锁：0 不存在权限框；1 有且全部可读；2 存在部分或全部不可读
-hidden_content  TEXT,        #已解锁的权限框内容，JSON
-keyword_list    TEXT,        #引用的用户名关键词，JSON
-PRIMARY KEY (topic_id, reply_id)
+topic_id        INTEGER NOT NULL,  # 所属主题tid
+topic_sf        TEXT,              # 所属主题sf
+reply_id        TEXT,              # pid
+floor           INTEGER,           # 楼层号
+username        TEXT,              # 用户名
+homepage_id     INTEGER,           # 用户主页uid
+homepage_sf     TEXT,              # 用户主页sf
+reply_box_color TEXT,              # 回复框颜色
+reply_time      INTEGER,           # 回帖时间
+record_time     INTEGER,           # 获取时间
+reply_text      TEXT,              # 紧凑化正文
+status          TEXT,              # 可访问性
+image_list      TEXT,              # 图像链接列表
+complete        INTEGER,           # 权限框是否全部解锁
+hidden_content  TEXT,              # 已解锁的权限框内容
+keyword_list    TEXT,              # 用户名类关键词
+PRIMARY KEY (topic_id, reply_id),
+FOREIGN KEY (topic_id) REFERENCES topic(topic_id)
 ```
 
+* 表中所有时间均以 UNIX 时间戳形式存储。
+* `status` / topic：active 正常 / closed 被关 / deleted 被删
+* `status` / reply：active 正常 / hidden 隐藏 / banned 禁言或删号
+* `complete`：0 不存在权限框 / 1 有且全部可读 / 2 存在部分或全部不可读
+* `image_list`, `hidden_content`, `keyword_list` 以 JSON 形式存库。
+* 若为普通楼层，`reply_id` 格式为 PID<pid\>，若为主题楼，则格式为 TPC<tid\>。
+
+
+hp.db 中只存在 homepage 表，  
 hp.db 是 `get_homepage` 函数在 db=True 时的存储对象。
 ```
 homepage 表：
-uid      INTEGER PRIMARY KEY,   #用户主页 uid
-sf       TEXT,                  #用户主页 sf
+uid      INTEGER PRIMARY KEY,   #用户主页uid
+sf       TEXT,                  #用户主页sf
 username TEXT,                  #用户名称
 regdate  TEXT,                  #注册日期
-ok       INTEGER                #是否获取成功：1 成功；0 失败
+ok       INTEGER                #是否获取成功
 ```
 
 
 ## 数据分析
-数据分析部分依赖本项目的 `analytics` 模块，由 `activity_analysis.ipynb` 完成。
+Jupyter-Lab: activity_analysis.ipynb
 
 * **Cell 1**：`query_data` 函数及其参数的说明
 * **Cell 2**：调用 `query_data`，从数据库中读取符合指定条件的全部主题及回复数据。
@@ -226,23 +254,13 @@ ok       INTEGER                #是否获取成功：1 成功；0 失败
 * **Cell B**：资源主题贡献排行，分为整体与自购两部分。
 
 ```
-关于任意uid注册时间的建模估算（复制自cell8）：
+关于任意uid注册时间的建模估算：
 假设我们有一张24小时热度分布权重表，表中元素相加为1
 当已知点数量为1，代表将一天分成了2份，接下来我们需要在权重表中找到从左向右加和到恰好等于50%的点
 当已知点数量为n，代表将一天分成了n+1份，接下来我们需要在权重表中分别找到从左向右加和恰好等于k/(n+1)处的点
 （实际上是先定位到小时然后在小时内线性插值，关于此处精度的改善可以从权重表入手，在上一个cell提高权重表时间粒度，但这也意味着更长的计算时间）
 为避免重复计算，先找出单日已知点数量的最大值N，然后前置地分别算出当已知点数量为1到N时，每个点的对应时刻，后面只需要查表赋值就好
 为了得到T时刻的uid最大值，我们需要找到已知点中早于T与晚于T的最近点，然后根据Ut=Ua+(Ub-Ua)×Wa得到结果，Wa指时刻A到时刻T占时刻A到时刻B的权重比例
-```
-
-绘图函数：
-```python
-from kf_analysis import analytics
-
-analytics.output_plot_bar(x, y, title, save, annotate, color, figsize, rotation)                          # 柱状图
-analytics.output_plot_line(x, y, title, save, annotate, color, figsize, rotation)                         # 折线图
-analytics.calendar_heatmap(day_counts, start, end, title, save, cmap, count_label, figsize, cell_height)  # 热力图
-analytics.plot_daily_bars(daily, title, save, color, figsize, ylim)                                       # 每日新增柱状图
 ```
 
 
@@ -252,6 +270,7 @@ kf_analysis/
 ├── __main__.py           # CLI 入口
 ├── configure.json        # 配置文件
 ├── coordinator.py        # 行为编排
+├── monitor.py            # 持续监控
 ├── service.py            # 网络请求与数据库操作
 ├── analyser.py           # 页面解析
 ├── actions.py            # 论坛动作
@@ -265,11 +284,16 @@ hp.db                     # 主页信息数据库·自动生成
 
 
 ## 更新日志
+* 2026.09.08 v2.3.0 update:   主题级持续监控功能的实现
 * 2026.09.01 v2.2.0 update:   任意UID注册时间建模估算的实现
-    * 2026.09.07 v2.2.1 update: 支持私信发送与已知用户名时探测uid/sf
+    * 2026.09.07 v2.2.1 update:   支持私信发送与已知用户名时探测uid/sf
 * 2026.08.23 v2.1.0 update:   发帖/编辑/买贴/转账功能的实现
-    * 2026.08.24 v2.1.1 update: gbk_len函数修复；upload_image函数实现
-    * 2026.08.26 v2.1.2 update: 转账功能CLI调用支持多用户名；转账成功判断逻辑修复
+    * 2026.08.24 v2.1.1 update:   gbk_len函数修复；upload_image函数实现
+    * 2026.08.26 v2.1.2 update:   转账功能CLI调用支持多用户名；转账成功判断逻辑修复
 * 2026.08.14 v2.0.0 update:   完全重构
 * 2025.06.07 v1.1.0 update:   主数据结构优化
 * 2025.05.11 v1.0.0 original: 初始版本
+
+
+## 更新展望
+* 持续监控功能的能力拓展

@@ -66,9 +66,17 @@ class Storage:
         return row is not None and row[0] == listing_count + 1
 
     def get_topic_floor_count(self, topic_id):
-        # 为什么不用 topic: reply_count？为了遇到最小化条目也能正常返回
+        # 为什么不直接用 reply_count 属性？
+        # ——为了遇到最小化条目时也能正常返回，同时规避楼层号不连续现象带来的影响
+        # ——楼层号不连续现象虽少见但确实存在，可能是楼主行为（仅在部分分区有此权限），也可能是管理行为
         row = self.conn.execute("SELECT COUNT(*) FROM reply WHERE topic_id=?", (topic_id,)).fetchone()
         return row[0]
+
+    def get_topic_max_floor(self, topic_id):
+        # 返回目标主题的最大楼层号，无法直接使用 get_topic_floor_count 函数替代
+        # 为与 monitor 模块中 last 的初值保持一致，当数据库中不存在对应条目时返回 -1
+        row = self.conn.execute("SELECT MAX(floor) FROM reply WHERE topic_id=?", (topic_id,)).fetchone()
+        return row[0] if row[0] is not None else -1
 
     def get_topic_usernames(self, topic_id):
         rows = self.conn.execute("SELECT DISTINCT username FROM reply WHERE topic_id=?", (topic_id,)).fetchall()
