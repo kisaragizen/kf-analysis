@@ -10,7 +10,7 @@ def check_page_status(soup):
     title = soup.find_all("title")[0].text
     if "此帖被管理员关闭" in title and not soup.find_all("div", class_="readtext"):
         return "closed"
-    if "数据读取错误" in title and not soup.find_all("div", class_="readtext"):
+    if "读取数据错误" in title and not soup.find_all("div", class_="readtext"):
         return "deleted"
     if "无安全验证" in title and not soup.find_all("div", class_="readtext"):
         return "incorrect"
