@@ -1,9 +1,24 @@
-import json, re
+import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
-
 READ_PHP = "https://bbs.kfpromax.com/read.php"
+
+
+LOG_CODES = {
+    "E101": "板块列表页获取失败",
+    "E102": "板块列表页请求异常",
+    "E103": "主题头信息获取失败",
+    "E104": "主题不存在或安全验证未通过",
+    "E105": "主题翻页获取失败",
+    "E106": "主题请求异常",
+    "E107": "用户主页获取失败",
+}
+
+
+def log_error(code, site, detail):
+    return f"[{code}] {site} | {detail}"
 
 
 @dataclass

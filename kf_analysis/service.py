@@ -1,4 +1,6 @@
-import json, sqlite3, time
+import json
+import sqlite3
+import time
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -58,35 +60,46 @@ class Storage:
         """)
 
     def has_topic(self, topic_id):
-        row = self.conn.execute("SELECT 1 FROM topic WHERE topic_id=?", (topic_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT 1 FROM topic WHERE topic_id=?", (topic_id,)
+        ).fetchone()
         return row is not None
 
     def should_skip(self, topic_id, listing_count):
-        row = self.conn.execute("SELECT reply_count FROM topic WHERE topic_id=?", (topic_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT reply_count FROM topic WHERE topic_id=?", (topic_id,)
+        ).fetchone()
         return row is not None and row[0] == listing_count + 1
 
     def get_topic_floor_count(self, topic_id):
         # 为什么不直接用 reply_count 属性？
         # ——为了遇到最小化条目时也能正常返回，同时规避楼层号不连续现象带来的影响
         # ——楼层号不连续现象虽少见但确实存在，可能是楼主行为（仅在部分分区有此权限），也可能是管理行为
-        row = self.conn.execute("SELECT COUNT(*) FROM reply WHERE topic_id=?", (topic_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM reply WHERE topic_id=?", (topic_id,)
+        ).fetchone()
         return row[0]
 
     def get_topic_max_floor(self, topic_id):
         # 返回目标主题的最大楼层号，无法直接使用 get_topic_floor_count 函数替代
         # 为与 monitor 模块中 last 的初值保持一致，当数据库中不存在对应条目时返回 -1
-        row = self.conn.execute("SELECT MAX(floor) FROM reply WHERE topic_id=?", (topic_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT MAX(floor) FROM reply WHERE topic_id=?", (topic_id,)
+        ).fetchone()
         return row[0] if row[0] is not None else -1
 
     def get_topic_usernames(self, topic_id):
-        rows = self.conn.execute("SELECT DISTINCT username FROM reply WHERE topic_id=?", (topic_id,)).fetchall()
+        rows = self.conn.execute(
+            "SELECT DISTINCT username FROM reply WHERE topic_id=?", (topic_id,)
+        ).fetchall()
         return [r[0] for r in rows]
 
     def insert_closed_topic(self, topic_id, topic_sf, status):
         # 为被锁定贴与被删除贴添加占位最小化条目
         self.conn.execute(
             "INSERT INTO topic (topic_id, topic_sf, record_time, status) VALUES (?,?,?,?)",
-            (topic_id, topic_sf, int(time.time()), status))
+            (topic_id, topic_sf, int(time.time()), status),
+        )
         self.conn.commit()
 
     def save_topic_tx(self, topic_info):
@@ -97,9 +110,17 @@ class Storage:
             self.conn.execute(
                 "INSERT OR REPLACE INTO topic (topic_id, topic_sf, board_id, board_name, title, reply_count, "
                 "topic_time, record_time, status) VALUES (?,?,?,?,?,?,?,?, 'active')",
-                (tid, topic_info["topic_sf"], topic_info["board_id"], topic_info["board_name"],
-                 topic_info["topic_title"], topic_info["reply_count"], topic_info["topic_time"],
-                 topic_info["record_time"]))
+                (
+                    tid,
+                    topic_info["topic_sf"],
+                    topic_info["board_id"],
+                    topic_info["board_name"],
+                    topic_info["topic_title"],
+                    topic_info["reply_count"],
+                    topic_info["topic_time"],
+                    topic_info["record_time"],
+                ),
+            )
             self.insert_replies(tid, topic_info)
 
     def save_incremental_tx(self, topic_info):
@@ -107,31 +128,60 @@ class Storage:
         with self.conn:
             tid = topic_info["topic_id"]
             last_floor = self.conn.execute(
-                "SELECT MAX(floor) FROM reply WHERE topic_id=?", (tid,)).fetchone()[0]
+                "SELECT MAX(floor) FROM reply WHERE topic_id=?", (tid,)
+            ).fetchone()[0]
             self.insert_replies(tid, topic_info, last_floor)
             self.conn.execute(
                 "UPDATE topic SET title=?, reply_count=?, record_time=? WHERE topic_id=?",
-                (topic_info["topic_title"], topic_info["reply_count"], topic_info["record_time"], tid))
+                (
+                    topic_info["topic_title"],
+                    topic_info["reply_count"],
+                    topic_info["record_time"],
+                    tid,
+                ),
+            )
 
     def insert_replies(self, tid, topic_info, min_floor=None):
         # 全增量共用回复行写入，跳过楼层号低于 min_floor 的
         rows = []
         for r in topic_info["reply_list"]:
-            if min_floor is not None and r["floor"] <= min_floor: continue
-            rows.append((tid, r["reply_id"], r["topic_sf"], r["floor"], r["username"],
-                         r["homepage_id"], r["homepage_sf"], r["reply_box_color"], r["reply_time"],
-                         r["reply_text"], topic_info["record_time"], "active",
-                         json.dumps(r["image_list"], ensure_ascii=False),
-                         r["complete"],
-                         json.dumps(r["hidden_content"], ensure_ascii=False),
-                         json.dumps(r["keyword_list"], ensure_ascii=False)))
+            if min_floor is not None and r["floor"] <= min_floor:
+                continue
+            rows.append(
+                (
+                    tid,
+                    r["reply_id"],
+                    r["topic_sf"],
+                    r["floor"],
+                    r["username"],
+                    r["homepage_id"],
+                    r["homepage_sf"],
+                    r["reply_box_color"],
+                    r["reply_time"],
+                    r["reply_text"],
+                    topic_info["record_time"],
+                    "active",
+                    json.dumps(r["image_list"], ensure_ascii=False),
+                    r["complete"],
+                    json.dumps(r["hidden_content"], ensure_ascii=False),
+                    json.dumps(r["keyword_list"], ensure_ascii=False),
+                )
+            )
         self.conn.executemany(
             "INSERT INTO reply (topic_id, reply_id, topic_sf, floor, username, homepage_id, homepage_sf, "
             "reply_box_color, reply_time, reply_text, record_time, status, image_list, complete, "
-            "hidden_content, keyword_list) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "hidden_content, keyword_list) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rows,
+        )
 
     def stats(self):
         topic_count = self.conn.execute("SELECT COUNT(*) FROM topic").fetchone()[0]
         reply_count = self.conn.execute("SELECT COUNT(*) FROM reply").fetchone()[0]
-        last_record = self.conn.execute("SELECT MAX(record_time) FROM topic").fetchone()[0]
-        return {"topic_count": topic_count, "reply_count": reply_count, "last_record_time": last_record}
+        last_record = self.conn.execute(
+            "SELECT MAX(record_time) FROM topic"
+        ).fetchone()[0]
+        return {
+            "topic_count": topic_count,
+            "reply_count": reply_count,
+            "last_record_time": last_record,
+        }

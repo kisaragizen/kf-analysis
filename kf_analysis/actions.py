@@ -3,15 +3,17 @@
 import os
 import re
 import time
-import requests
 from urllib.parse import quote
+import requests
 from bs4 import BeautifulSoup
 from .service import Client
 from .utils import load_config, topic_url
 
 
 def gbk_form(data):
-    def enc(v): return quote(str(v).encode("gbk", errors="replace"), safe="")
+    def enc(v):
+        return quote(str(v).encode("gbk", errors="replace"), safe="")
+
     return "&".join(f"{enc(k)}={enc(v)}" for k, v in data.items()).encode("gbk")
 
 
@@ -25,54 +27,93 @@ def buy_topic(client, topic_id, topic_sf, mode):
             if legend and "此帖售价" in legend.text:
                 return q
         return None
+
     soup = BeautifulSoup(client.get(topic_url(topic_id, topic_sf)).content, "lxml")
     fs = find_sale_box(soup)
-    if fs is None: return -2
+    if fs is None:
+        return -2
     button = fs.find("input", onclick=lambda v: v and "buytopic" in v)
-    if button is None: return -1
+    if button is None:
+        return -1
     price = int(re.findall(r"此帖售价\s*(\d+)", fs.find("legend").text)[0])
     if mode == "buy":
         onclick = button["onclick"]
-        client.get("https://bbs.kfpromax.com/" + re.search(r'location\.href="([^"]+)"', onclick).group(1))
+        client.get(
+            "https://bbs.kfpromax.com/"
+            + re.search(r'location\.href="([^"]+)"', onclick).group(1)
+        )
         soup = BeautifulSoup(client.get(topic_url(topic_id, topic_sf)).content, "lxml")
         fs = find_sale_box(soup)
-        if fs is not None and fs.find("input", onclick=lambda v: v and "buytopic" in v) is not None:
+        if (
+            fs is not None
+            and fs.find("input", onclick=lambda v: v and "buytopic" in v) is not None
+        ):
             return None
     return price
 
 
 def transfer_money(client, username, amount, memo=""):
-    headers = {"Content-Type": "application/x-www-form-urlencoded",
-               "Referer": "https://bbs.kfpromax.com/hack.php?H_name=bank"}
-    data = gbk_form({"action": "virement", "pwuser": username, "to_money": str(amount), "memo": memo})
-    resp = client.session.post(headers["Referer"], data=data, timeout=15, headers=headers)
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": "https://bbs.kfpromax.com/hack.php?H_name=bank",
+    }
+    data = gbk_form(
+        {
+            "action": "virement",
+            "pwuser": username,
+            "to_money": str(amount),
+            "memo": memo,
+        }
+    )
+    resp = client.session.post(
+        headers["Referer"], data=data, timeout=15, headers=headers
+    )
     text = resp.content.decode("gbk", errors="replace")
-    m = re.search(r"(?:提示信息|操作提示)<br[^>]*>(.+?)<br", text, re.S)
+    m = re.search(r"(?:提示信息|操作提示)<br[^>]*>(.+?)<br", text, re.DOTALL)
     return re.sub(r"<[^>]+>", "", m.group(1)).strip() if m else ""
 
 
 def upload_image(path):
     # inari.site 图床上传
-    if os.path.getsize(path) > 2 * 1024 * 1024: raise ValueError("图片大小超出限制")
-    with open(path, "rb") as f: r = requests.post("https://up.inari.site/upload", files={"file": (os.path.basename(path), f)}, timeout=60)
+    if os.path.getsize(path) > 2 * 1024 * 1024:
+        raise ValueError("图片大小超出限制")
+    with open(path, "rb") as f:
+        r = requests.post(
+            "https://up.inari.site/upload",
+            files={"file": (os.path.basename(path), f)},
+            timeout=60,
+        )
     data = r.json()
-    if not data["status"]: raise RuntimeError(data["message"])
+    if not data["status"]:
+        raise RuntimeError(data["message"])
     return data["data"]["links"]["url"]
 
 
 def send_message(client, username, title, content, save=False):
     # 私信发送函数，save=True 时将同步保存到发件箱中
     url = "https://bbs.kfpromax.com/message.php"
-    data = {"action": "write", "step": "2", "pwuser": username,
-            "msg_title": title, "atc_content": content,
-            "Submit": "提 交", **({"ifsave": "Y"} if save else {})}
-    headers = {"Content-Type": "application/x-www-form-urlencoded",
-               "Referer": f"{url}?action=write"}
+    data = {
+        "action": "write",
+        "step": "2",
+        "pwuser": username,
+        "msg_title": title,
+        "atc_content": content,
+        "Submit": "提 交",
+        **({"ifsave": "Y"} if save else {}),
+    }
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": f"{url}?action=write",
+    }
     resp = client.session.post(url, data=gbk_form(data), headers=headers, timeout=15)
     text = resp.content.decode("gbk", errors="replace")
-    if "操作完成" in text: return {"ok": True, "message": "操作完成"}
-    m = re.search(r"操作提示<br[^>]*>(.+?)<br", text, re.S)
-    return {"ok": False, "message": re.sub(r"<[^>]+>", "", m.group(1)).strip() if m else ""}
+    if "操作完成" in text:
+        return {"ok": True, "message": "操作完成"}
+    m = re.search(r"操作提示<br[^>]*>(.+?)<br", text, re.DOTALL)
+    return {
+        "ok": False,
+        "message": re.sub(r"<[^>]+>", "", m.group(1)).strip() if m else "",
+    }
 
 
 def search_user_hp(client, username):
@@ -80,24 +121,51 @@ def search_user_hp(client, username):
     # 正常流程下，本函数产生的私信会被自动清理，被探测方亦不可见，进而无法察觉本次探测
     base = "https://bbs.kfpromax.com/message.php"
     headers = {"Content-Type": "application/x-www-form-urlencoded", "Referer": base}
+
     def hp_row(page):
         soup = BeautifulSoup(client.get(f"{base}?action={page}").content, "lxml")
-        return next((tr for tr in soup.find_all("tr") if tr.find("a", href=re.compile(r"read\w+&mid=\d+"))), None)
+        return next(
+            (
+                tr
+                for tr in soup.find_all("tr")
+                if tr.find("a", href=re.compile(r"read\w+&mid=\d+"))
+            ),
+            None,
+        )
+
     def del_one(mid, where):
         data = {"delid[]": str(mid), "towhere": where, "action": "del"}
         client.session.post(base, data=gbk_form(data), headers=headers, timeout=15)
+
     title = f"sf-hp-{int(time.time())}"
     result = send_message(client, username, title, "sent by kf-analysis", save=True)
-    if not result["ok"]: return {"ok": False, "uid": None, "sf": None, "message": result["message"]}
+    if not result["ok"]:
+        return {"ok": False, "uid": None, "sf": None, "message": result["message"]}
     tr, tr2 = hp_row("sendbox"), hp_row("scout")
-    if tr is None or tr2 is None: return {"ok": False, "uid": None, "sf": None, "message": "探测私信自动清理失败"}
-    link = next((a for a in tr.find_all("a", href=re.compile(r"profile\.php\?action=show&uid=\d+&sf=[0-9a-fA-F]+"))
-                 if a.get_text(strip=True) == username), None)
-    if link is None: return {"ok": False, "uid": None, "sf": None, "message": "探测私信自动清理失败"}
+    if tr is None or tr2 is None:
+        return {"ok": False, "uid": None, "sf": None, "message": "探测私信自动清理失败"}
+    link = next(
+        (
+            a
+            for a in tr.find_all(
+                "a",
+                href=re.compile(r"profile\.php\?action=show&uid=\d+&sf=[0-9a-fA-F]+"),
+            )
+            if a.get_text(strip=True) == username
+        ),
+        None,
+    )
+    if link is None:
+        return {"ok": False, "uid": None, "sf": None, "message": "探测私信自动清理失败"}
     uid, sf = re.search(r"uid=(\d+)&sf=([0-9a-fA-F]+)", link["href"]).groups()
-    mid = int(tr.find("a", href=re.compile(r"readsnd&mid=\d+"))["href"].split("mid=")[1])
-    mid2 = int(tr2.find("a", href=re.compile(r"readscout&mid=\d+"))["href"].split("mid=")[1])
-    del_one(mid, "sendbox"); del_one(mid2, "scout")
+    mid = int(
+        tr.find("a", href=re.compile(r"readsnd&mid=\d+"))["href"].split("mid=")[1]
+    )
+    mid2 = int(
+        tr2.find("a", href=re.compile(r"readscout&mid=\d+"))["href"].split("mid=")[1]
+    )
+    del_one(mid, "sendbox")
+    del_one(mid2, "scout")
     return {"ok": True, "uid": int(uid), "sf": sf, "message": "全流程执行成功"}
 
 
@@ -107,13 +175,19 @@ def search_user_sf(client, uid, start):
     with open("sf_search.txt", "a", encoding="utf-8", buffering=1) as f:
         while True:
             sf = f"{cur:03x}"
-            resp = client.get(f"https://bbs.kfpromax.com/profile.php?action=show&uid={uid}&sf={sf}")
-            if resp.status_code >= 300: print("可能已被风控，即刻停止"); return
+            resp = client.get(
+                f"https://bbs.kfpromax.com/profile.php?action=show&uid={uid}&sf={sf}"
+            )
+            if resp.status_code >= 300:
+                print("可能已被风控，即刻停止")
+                return
             found = "注册时间" in resp.text
             f.write(f"{uid}, {sf}, {found}\n")
             print(f"{uid}, {sf}, {found}")
-            if found: return
-            if cur >= 0xFFF: return
+            if found:
+                return
+            if cur >= 0xFFF:
+                return
             cur += 1
             time.sleep(3)
 
@@ -125,12 +199,16 @@ def search_topic_sf(client, tid, start):
         while True:
             sf = f"{cur:03x}"
             resp = client.get(f"https://bbs.kfpromax.com/read.php?tid={tid}&sf={sf}")
-            if resp.status_code >= 300: print("可能已被风控，即刻停止"); return
+            if resp.status_code >= 300:
+                print("可能已被风控，即刻停止")
+                return
             found = "无安全验证" not in resp.text
             f.write(f"{tid}, {sf}, {found}\n")
             print(f"{tid}, {sf}, {found}")
-            if found: return
-            if cur >= 0xFFF: return
+            if found:
+                return
+            if cur >= 0xFFF:
+                return
             cur += 1
             time.sleep(3)
 
@@ -154,16 +232,25 @@ class Actions:
             if form.find("input", attrs={"name": "verify"}):
                 for inp in form.find_all(["input", "textarea"]):
                     name = inp.get("name")
-                    if not name: continue
-                    if inp.name == "textarea": data[name] = inp.get_text()
-                    else: data[name] = inp.get("value", "")
+                    if not name:
+                        continue
+                    if inp.name == "textarea":
+                        data[name] = inp.get_text()
+                    else:
+                        data[name] = inp.get("value", "")
                 return data
         return None
 
     def parse_response(self, content):
         text = content.decode("gbk", errors="replace")
         m = re.search(r"read\.php\?tid=(\d+)(?:&sf=([0-9a-fA-F]+))?", text)
-        if m: return {"ok": True, "tid": int(m.group(1)), "sf": m.group(2), "message": "发表成功"}
+        if m:
+            return {
+                "ok": True,
+                "tid": int(m.group(1)),
+                "sf": m.group(2),
+                "message": "发表成功",
+            }
         return {"ok": False, "tid": None, "sf": None, "message": "解析失败"}
 
     def post_reply(self, tid, sf, content, keywords=""):
@@ -178,32 +265,50 @@ class Actions:
         post_url = f"https://bbs.kfpromax.com/post.php?fid={fid}&newthread=1"
         soup = self.get_soup(post_url)
         data = self.get_form(soup)
-        if not data: return {"ok": False, "message": "主题发帖页面获取失败/解析失败"}
-        data.update(atc_title=title, atc_content=content, diy_guanjianci=keywords, Submit="确定发表")
+        if not data:
+            return {"ok": False, "message": "主题发帖页面获取失败/解析失败"}
+        data.update(
+            atc_title=title,
+            atc_content=content,
+            diy_guanjianci=keywords,
+            Submit="确定发表",
+        )
         return self.submit(data)
 
     def get_modify_page(self, tid, sf, pid, article):
         soup = self.get_soup(topic_url(tid, sf))
         topic_data = self.get_form(soup)
-        if not topic_data: return None, "帖子ID或楼层不存在"
+        if not topic_data:
+            return None, "帖子ID或楼层不存在"
         fid = topic_data["fid"]
-        modify_url = (f"https://bbs.kfpromax.com/post.php?action=modify"
-                      f"&fid={fid}&tid={tid}&pid={pid}&article={article}")
+        modify_url = (
+            f"https://bbs.kfpromax.com/post.php?action=modify"
+            f"&fid={fid}&tid={tid}&pid={pid}&article={article}"
+        )
         soup = self.get_soup(modify_url)
         data = self.get_form(soup)
-        if data: return data, None
+        if data:
+            return data, None
         title = soup.find("title").text
-        if "无权限" in title: return None, "对此贴没有编辑权限"
-        if "非法" in title: return None, "目标楼层不存在"
+        if "无权限" in title:
+            return None, "对此贴没有编辑权限"
+        if "非法" in title:
+            return None, "目标楼层不存在"
         return None, "编辑页获取失败"
 
     def get_post_content(self, tid, sf, pid="tpc", article=0):
         data, err = self.get_modify_page(tid, sf, pid, article)
-        if not data: return {"ok": False, "message": err}
-        return {"ok": True, "title": data.get("atc_title", ""), "content": data.get("atc_content", "")}
+        if not data:
+            return {"ok": False, "message": err}
+        return {
+            "ok": True,
+            "title": data.get("atc_title", ""),
+            "content": data.get("atc_content", ""),
+        }
 
-    def edit_post(self, tid, sf, pid="tpc", article=0,
-                  content=None, title=None, keywords=None):
+    def edit_post(
+        self, tid, sf, pid="tpc", article=0, content=None, title=None, keywords=None
+    ):
         data, err = self.get_modify_page(tid, sf, pid, article)
         if not data:
             return {"ok": False, "message": err}
@@ -228,5 +333,7 @@ class Actions:
             return {"ok": False, "message": "正文超过 50000 字节（GBK）"}
         post_url = "https://bbs.kfpromax.com/post.php"
         headers = {"Content-Type": "application/x-www-form-urlencoded; charset=gbk"}
-        resp = self.client.session.post(post_url, data=gbk_form(data), timeout=15, headers=headers)
+        resp = self.client.session.post(
+            post_url, data=gbk_form(data), timeout=15, headers=headers
+        )
         return self.parse_response(resp.content)

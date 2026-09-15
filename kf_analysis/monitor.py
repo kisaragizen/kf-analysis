@@ -7,7 +7,8 @@ def monitor_event(data, criteria):
     # data 为包含最新主题头信息的增量回复列表（增量回复列表 → data["reply_list"]）
     # criteria 一般用于指定监控对象，比如当命中条件为“某条回复是由特定用户发送的”时，可以作为用户名列表使用
     data["reply_list"] = [r for r in data["reply_list"] if r["username"] in criteria]
-    if data["reply_list"]: return data
+    if data["reply_list"]:
+        return data
     # 也可以通过永远返回真值来实现“只要存在新增就调用执行函数”
 
 
@@ -15,11 +16,20 @@ def monitor_action(matches):
     # 监控命中执行函数，当 monitor_event 存在命中时调用本函数
     # matches 即为 monitor_event 的返回值，不过此处只定义了一个蜂鸣提醒，并没有用到
     import winsound
+
     winsound.Beep(1000, 300)
 
 
-def monitor_topic(config, links, gap=300, criteria=(), store=False, db_path="kf.db",
-                  event=monitor_event, action=monitor_action):
+def monitor_topic(
+    config,
+    links,
+    gap=300,
+    criteria=(),
+    store=False,
+    db_path="kf.db",
+    event=monitor_event,
+    action=monitor_action,
+):
     # 对若干主题进行持续监控，以 gap 秒为间隔进行循环访问
     # store 用于设置是否在监控的同时对 db_path 指定的数据库进行增量更新
     # event 为监控命中判断函数，action 为监控命中执行函数，criteria 定义详见 monitor_event
@@ -43,6 +53,7 @@ def monitor_topic(config, links, gap=300, criteria=(), store=False, db_path="kf.
             print(f"本轮新增：{i[0]}")
         elif code == 6:
             print(f"访问失败：{target[2]}")
+
     i = [0]
     last = {tid: -1 for tid, _ in links}
     targets = [[tid, sf, 0] for tid, sf in links]
@@ -76,7 +87,9 @@ def monitor_topic(config, links, gap=300, criteria=(), store=False, db_path="kf.
             if data is None:
                 echo(target[0], 4)
                 continue
-            data["reply_list"] = [r for r in data["reply_list"] if r["floor"] > last[target[0]]]
+            data["reply_list"] = [
+                r for r in data["reply_list"] if r["floor"] > last[target[0]]
+            ]
             last[target[0]] = data["reply_list"][-1]["floor"]
             i[0] = len(data["reply_list"])
             echo(target[0], 5)
