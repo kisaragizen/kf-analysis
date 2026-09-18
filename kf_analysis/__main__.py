@@ -1,4 +1,4 @@
-"""本文件用于将各种功能封装为 CLI 调用的形式
+"""本文件用于将各种功能封装为 CLI 调用
 以下所有命令在实际运行时都需要前缀 python -m kf_analysis
 ======================================================================
 fetch all [--force] [--db 路径]
@@ -24,19 +24,22 @@ buy <link> [--buy]
 transfer <username_list> <amount> [--memo]
     贡献转账，向一个或多个用户名转账 <amount>（HB）
     username_list 为以半角逗号分隔用户名的单字符串
-monitor topic <link>... [--file] [--store] [--db 路径] [--gap] [--criteria]
-    持续监控指定主题，以 --gap 秒为间隔循环增量抓取
+monitor topic <link>... [--file] [--store] [--force] [--criteria] [--gap] [--db 路径]
+    持续监控指定主题，以 gap 秒为间隔循环增量抓取
     可选参数 [--gap]：决定监控周期（秒），缺省值为 300
-    可选参数 [--store]：决定是否在监控的同时将增量数据存入数据库，缺省时仅监视
-    可选参数 [--criteria]：判定依据列表，以半角逗号分隔参数的单字符串
-                           默认的判定规则为「新增回复是否由特定用户发出的」
-                           那么此时的 --criteria 就用于传递用户名列表
-                           也就是说该参数的意义会随着判定规则的改变而改变"""
+    可选参数 [--store]：指定是否要在监控时对本地数据库进行更新
+    可选参数 [--force]：用于指定基线轮次的行为
+                        True 时为全量更新+历史信息也将参与命中判定
+                        False 时为增量更新+仅基线建立后的新信息参与命中判定
+    可选参数 [--criteria]：判定依据字符串，格式与意义取决于 event 的实现
+                           默认监控行为「当新增回复由特定用户发出时，进行气泡提示」
+                           默认监控行为下该参数用于传递以半角逗号分隔的用户名列表"""
 
 import argparse
 import json
 import logging
 import re
+import time
 from . import utils
 from .actions import Actions, buy_topic, transfer_money
 from .coordinator import KFanalysis
@@ -60,15 +63,14 @@ def parse_link(link):
     return r
 
 
-def main():
-    setup_logging()
+def build_parser():
     parser = argparse.ArgumentParser(prog="kf-analysis")
     sub = parser.add_subparsers(dest="command", required=True)
     fetch = sub.add_parser("fetch")
     fetch.add_argument("target", choices=["all", "board", "topic"])
     fetch.add_argument("value", nargs="*")
+    fetch.add_argument("--file")
     fetch.add_argument("--force", action="store_true")
-    fetch.add_argument("--file", default="")
     fetch.add_argument("--db", default="kf.db")
     get = sub.add_parser("get")
     get.add_argument("kind", choices=["json", "usernames", "homepage"])
@@ -86,12 +88,18 @@ def main():
     monitor = sub.add_parser("monitor")
     monitor.add_argument("target", choices=["topic"])
     monitor.add_argument("value", nargs="*")
-    monitor.add_argument("--file", default="")
+    monitor.add_argument("--file")
     monitor.add_argument("--store", action="store_true")
-    monitor.add_argument("--db", default="kf.db")
-    monitor.add_argument("--gap", type=int, default=300)
+    monitor.add_argument("--force", action="store_true")
     monitor.add_argument("--criteria", default="")
-    args = parser.parse_args()
+    monitor.add_argument("--gap", type=int, default=300)
+    monitor.add_argument("--db", default="kf.db")
+    return parser
+
+
+def main():
+    setup_logging()
+    args = build_parser().parse_args()
     if args.command == "monitor":
         links = list(args.value)
         if args.file:
@@ -99,32 +107,28 @@ def main():
                 with open(args.file, encoding="utf-8") as f:
                     links += [line.strip() for line in f if line.strip()]
             except FileNotFoundError:
-                print(f"链接文件 {args.file} 不存在")
+                print("无法打开指定文件")
                 return
         if not links:
-            print("请通过参数或文件途径确保至少一个链接")
+            print("待处理主题列表为空")
             return
-        criteria = tuple(n.strip() for n in args.criteria.split(",") if n.strip())
         parsed = [parse_link(link) for link in links]
         monitor_topic(
             utils.load_config(),
             parsed,
             gap=args.gap,
-            criteria=criteria,
             store=args.store,
+            force=args.force,
+            criteria=args.criteria,
             db_path=args.db,
         )
         return
     if args.command in ("buy", "transfer"):
         actions = Actions(utils.load_config())
-    elif args.command == "get":
-        kf = KFanalysis(utils.load_config())
-    else:
-        kf = KFanalysis(utils.load_config(), db_path=args.db)
     if args.command == "buy":
         tid, sf = parse_link(args.link)
-        price = buy_topic(actions.client, tid, sf, "buy" if args.buy else "")
-        if price is None:
+        price = buy_topic(actions.client, tid, sf, "buy" if args.buy else "check")
+        if not price:
             print("购买失败")
         elif price == -1:
             print("已经购买")
@@ -138,24 +142,24 @@ def main():
             print("用户名列表为空")
             return
         for name in names:
-            print(
-                f"向 {name} 转账："
-                + transfer_money(actions.client, name, args.amount, memo=args.memo)
-            )
+            print(f"向 {name} 转账：", end="")
+            print(transfer_money(actions.client, name, args.amount, memo=args.memo))
     if args.command == "fetch":
+        kf = KFanalysis(utils.load_config(), db_path=args.db)
         if args.target == "all":
             kf.fetch_all(force=args.force)
         elif args.target == "board":
             if not args.value:
-                print("缺少 fid")
+                print("需要指定板块序号")
                 return
             try:
                 fid = int(args.value[0])
             except ValueError:
-                print("fid 应为板块序号数字")
+                print("板块序号应为数字")
                 return
             if fid not in {f for _, f in kf.config.boardlist}:
-                print("fid 错误或不存在于配置文件")
+                print("如果你确定该板块序号存在，", end="")
+                print("请先在 configure.json 中填写它")
                 return
             kf.fetch_board(fid, force=args.force)
         elif args.target == "topic":
@@ -164,26 +168,32 @@ def main():
                     with open(args.file, encoding="utf-8") as f:
                         args.value += [line.strip() for line in f if line.strip()]
                 except FileNotFoundError:
-                    print(f"链接文件 {args.file} 不存在")
+                    print("无法打开指定文件")
                     return
             if not args.value:
-                print("缺少 topic 链接")
+                print("待处理主题列表为空")
                 return
             parsed = [parse_link(link) for link in args.value]
             for i, (tid, sf) in enumerate(parsed):
                 kf.fetch_onetopic(
-                    tid, sf, force=args.force, disp=True, index=i, total=len(parsed)
+                    tid,
+                    sf,
+                    index=i,
+                    total=len(parsed),
+                    force=args.force,
+                    disp=True,
                 )
-    elif args.command == "get":
+    if args.command == "get":
+        kf = KFanalysis(utils.load_config())
         if args.kind == "homepage":
             uid = re.findall(r"uid=(\d+)", args.link)
             sf = re.findall(r"sf=([^&]+)", args.link)
-            if not uid:
-                print("请输入正确的用户主页链接")
+            if not uid or not sf:
+                print("用户主页链接格式错误")
                 return
-            data = kf.get_homepage(int(uid[0]), sf[0] if sf else "")
+            data = kf.get_homepage(int(uid[0]), sf[0])
             if not isinstance(data, dict):
-                print(f"用户主页 {uid[0]} 获取失败")
+                print("用户主页信息获取失败")
                 return
             for key, val in data.items():
                 print(f"{key}：{val}")
@@ -192,25 +202,27 @@ def main():
         try:
             if args.kind == "usernames":
                 data = kf.get_topic_usernames(tid, sf, dedup=args.dedup)
-            else:
+            elif args.kind == "json":
                 data = kf.get_topic_json(tid, sf)
-        except Exception as e:
-            print(f"帖子 ({tid}, {sf}) 获取失败，错误信息 {e}")
+        except Exception:
+            print("数据获取失败A")
             return
         if data in ("closed", "deleted"):
-            print(f"该主题已被管理员关闭或删除: {data}")
+            print("该主题已被关闭或删除")
         elif args.kind == "usernames" and isinstance(data, list):
             print(", ".join(data))
-        elif isinstance(data, dict):
+        elif args.kind == "json" and isinstance(data, dict):
             with open("json_result.txt", "w", encoding="utf-8") as f:
                 f.write(json.dumps(data, ensure_ascii=False, indent=2))
-            print("数据已覆盖写入到 json_result.txt")
+            print("数据已写入同目录文本文件")
         else:
-            print("获取失败")
-    elif args.command == "state":
-        stats = kf.storage.stats()
+            print("数据获取失败B")
+    if args.command == "state":
+        stats = KFanalysis(utils.load_config(), db_path=args.db).storage.stats()
+        last = stats["last_record_time"]
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last))
         print(f"主题数: {stats['topic_count']}\n回复数: {stats['reply_count']}")
-        print(f"最近抓取时间: {stats['last_record_time']}\n")
+        print(f"最后抓取时间: {stamp}\n")
         with open("error.log", encoding="utf-8") as f:
             print("".join(f.readlines()[-10:]))
 

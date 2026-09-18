@@ -58,11 +58,19 @@ class KFanalysis:
         return result_dedup
 
     def get_onetopic_info(
-        self, topic_id, topic_sf, disp=False, index=0, total=1, force=False
+        self,
+        topic_id,
+        topic_sf,
+        disp=False,
+        index=0,
+        total=1,
+        force=False,
+        return_header=False,
     ):
         # 访问并解析一个 topic，始终获取第 1 页用于解析 topic 头信息（用于单独调用时的增量判断）
         # force 参数缺省时为普通增量更新，即便此前数据库中不存在对应 topic 条目也能正常运行
         # force 参数为 True 时为强制全量更新，会覆盖数据库中对应 topic 条目中的旧数据
+        # return_header 参数为 True 时，即便不存在增量也会返回主题头信息，附带 header_only 标记
         # 关于返回值：无更新=None；有更新=topic_info；失败=False；帖子存在但无法访问="closed"或"deleted"
         # 关于返回值：在普通增量更新模式下，topic_info 会附带 incremental 标记，用于帮助上层调用决定存储策略
         topic_url = utils.topic_url(topic_id, topic_sf)
@@ -101,6 +109,11 @@ class KFanalysis:
                 max(db_total // 20 + 1, 2), (topic_info["reply_count"] - 1) // 20 + 2
             )
             username_dict = {u: 1 for u in self.storage.get_topic_usernames(topic_id)}
+        elif return_header:
+            topic_info["reply_list"] = []
+            topic_info["header_only"] = True
+            topic_info["incremental"] = True
+            return topic_info
         else:
             return None
 
@@ -145,6 +158,7 @@ class KFanalysis:
         disp=False,
         index=0,
         total=1,
+        return_header=False,
     ):
         if (
             not force
@@ -157,7 +171,13 @@ class KFanalysis:
         # 后置楼层跳过：指下层函数内部的跳过逻辑（即增量判断逻辑）
         try:
             data = self.get_onetopic_info(
-                topic_id, topic_sf, disp=disp, index=index, total=total, force=force
+                topic_id,
+                topic_sf,
+                disp=disp,
+                index=index,
+                total=total,
+                force=force,
+                return_header=return_header,
             )
         except Exception:
             logger.error(
@@ -174,6 +194,8 @@ class KFanalysis:
             return data
         # 链接键入错误与其他失败态，帖子曾真实存在性为否或无法判定，不进行条目存储
         if not isinstance(data, dict):
+            return data
+        if data.get("header_only"):
             return data
         if data.get("incremental"):
             self.storage.save_incremental_tx(data)

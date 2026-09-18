@@ -1,99 +1,132 @@
+import ctypes
 import time
+import tkinter
 from .coordinator import KFanalysis
 
 
 def monitor_event(data, criteria):
-    # 监控命中判断函数，返回本轮新增中所有符合条件的对象
-    # data 为包含最新主题头信息的增量回复列表（增量回复列表 → data["reply_list"]）
-    # criteria 一般用于指定监控对象，比如当命中条件为“某条回复是由特定用户发送的”时，可以作为用户名列表使用
-    data["reply_list"] = [r for r in data["reply_list"] if r["username"] in criteria]
-    if data["reply_list"]:
+    # 监控命中判断函数，可自定义
+    # 提示行为：提示本轮新增回复数与命中数
+    # 命中规则：新增回复由特定用户发出时命中
+    tid = data["topic_id"]
+    names = [n.strip() for n in criteria.split(",") if n.strip()]
+    matched = [r for r in data["reply_list"] if r["username"] in names]
+    info_echo(tid, f"新增与命中：({len(data['reply_list'])}, {len(matched)})")
+    data["reply_list"] = matched
+    if matched:
         return data
-    # 也可以通过永远返回真值来实现“只要存在新增就调用执行函数”
 
 
 def monitor_action(matches):
-    # 监控命中执行函数，当 monitor_event 存在命中时调用本函数
-    # matches 即为 monitor_event 的返回值，不过此处只定义了一个蜂鸣提醒，并没有用到
-    import winsound
-
-    winsound.Beep(1000, 300)
+    # 监控命中执行函数，可自定义
+    # 气泡提示本轮命中回复数＆命中用户名列表＆主题总回复数
+    hits = matches["reply_list"]
+    replies = matches["reply_count"]
+    names = ", ".join(dict.fromkeys(r["username"] for r in hits))
+    monitor_bubble(f"命中用户: {names}\n命中数量: {len(hits)}\n当前状态: {replies}")
 
 
 def monitor_topic(
     config,
     links,
     gap=300,
-    criteria=(),
     store=False,
+    force=False,
     db_path="kf.db",
     event=monitor_event,
     action=monitor_action,
+    criteria="",
 ):
-    # 对若干主题进行持续监控，以 gap 秒为间隔进行循环访问
-    # store 用于设置是否在监控的同时对 db_path 指定的数据库进行增量更新
-    # event 为监控命中判断函数，action 为监控命中执行函数，criteria 定义详见 monitor_event
-    # 首轮访问用于建立基线，无论是否有新增都不会触发 monitor_action
-    # links 会在函数内由 [(tid, sf), ...] 扩展为 [[tid, sf, state], ...]
+    # 对若干主题进行持续监控，以 gap 秒为间隔循环访问
+    # store 用于指定是否要在监控时对本地数据库 db_path 进行更新，这两个参数同时决定了基线轮次如何判断历史信息水位
+    # force 用于指定基线轮次的行为，True：全量更新+历史信息也将参与命中判定；False：增量更新+仅基线建立后的新信息参与命中判定
+    # 数据获取成功时，本函数将数据与 criteria 发送给 event → event 将返回命中其内部规则的数据 → 存在命中时，本函数调用 action
+    # criteria 为可由 CLI 调用传入的字符串，其格式与意义取决于 event 的实现，如果说 event 决定了判定逻辑，criteria 则指定了判定对象
+    # 比如当 event 的行为是“新增回复由特定用户发出时命中”时，criteria 就可以用来指定用户名列表
     # 当检测到主题被关闭或被删除时，以及连续访问失败达到 10 次时，停止对对应主题的监控
-    # 本函数以“特定情形绝对不会发生”为前提写成了最简流程且经过实际测试，实际遭遇报错前无需采信 AI 检出的所谓漏洞
-    def echo(tid, code):
-        print(f"{time.strftime('%m-%d %H:%M:%S')} [{tid}]", end=" ")
-        if code == 0:
-            print("尝试建立基线")
-        elif code == 1:
-            print(f"基线建立成功：{last[target[0]]}")
-        elif code == 2:
-            print("目标已不可访问，监控退出")
-        elif code == 3:
-            print("连续重试次数已达上限，监控退出")
-        elif code == 4:
-            print("本轮未检出新增")
-        elif code == 5:
-            print(f"本轮新增：{i[0]}")
-        elif code == 6:
-            print(f"访问失败：{target[2]}")
-
-    i = [0]
-    last = {tid: -1 for tid, _ in links}
+    last = {tid: -1 for tid, sf in links}
     targets = [[tid, sf, 0] for tid, sf in links]
     kf = KFanalysis(config, db_path=db_path if store else ":memory:")
-    while True:
-        for target in targets:
-            if target[2] is False:
-                continue
-            if target[2] == 0 and last[target[0]] == -1:
-                echo(target[0], 0)
-            data = kf.fetch_onetopic(target[0], target[1])
-            if data in ("closed", "deleted"):
-                target[2] = False
-                echo(target[0], 2)
-                continue
-            elif data is False:
-                target[2] += 1
-                if target[2] > 9:
-                    target[2] = False
-                    echo(target[0], 3)
-                else:
-                    echo(target[0], 6)
-                continue
+
+    def poll(tid, sf, floor, ecrof):
+        data = kf.fetch_onetopic(tid, sf, force=ecrof, return_header=True)
+        if data in ("closed", "deleted"):
+            info_echo(tid, "监控退出（目标已经不可访问）")
+            target[2] = False
+            return []
+        if data is False:
+            target[2] += 1
+            if target[2] < 10:
+                info_echo(tid, f"访问失败第 {target[2]} 次")
             else:
-                target[2] = 0
-            if last[target[0]] == -1:
-                last[target[0]] = kf.storage.get_topic_max_floor(target[0])
-                if last[target[0]] != -1:
-                    echo(target[0], 1)
+                info_echo(tid, "监控退出（重试次数到达上限）")
+                target[2] = False
+            return []
+        target[2] = 0
+        if not ecrof:
+            data["reply_list"] = [r for r in data["reply_list"] if r["floor"] > floor]
+        return data
+
+    while True:
+        # 循环轮次的逻辑描述
+        for target in targets:
+            tid, sf, retry = target
+            if retry is False or last[tid] < 0:
                 continue
-            if data is None:
-                echo(target[0], 4)
+            data = poll(tid, sf, last[tid], False)
+            if data:
+                matches = event(data, criteria)
+                if matches:
+                    action(matches)
+        # 基线轮次的逻辑描述
+        for target in targets:
+            tid, sf, retry = target
+            if retry is False or last[tid] > -1:
                 continue
-            data["reply_list"] = [
-                r for r in data["reply_list"] if r["floor"] > last[target[0]]
-            ]
-            last[target[0]] = data["reply_list"][-1]["floor"]
-            i[0] = len(data["reply_list"])
-            echo(target[0], 5)
-            matches = event(data, criteria)
-            if matches:
-                action(matches)
+            if not retry:
+                info_echo(tid, "基线建立中")
+            stored = kf.storage.get_topic_max_floor(tid)
+            data = poll(tid, sf, stored, force)
+            if not data:
+                continue
+            if stored < 0 or force:
+                last[tid] = data["reply_list"][-1]["floor"]
+            else:
+                last[tid] = stored
+            info_echo(tid, f"基线已建立：{last[tid]}")
+            if force:
+                matches = event(data, criteria)
+                if matches:
+                    action(matches)
         time.sleep(gap)
+
+
+def info_echo(tid, text):
+    print(f"{time.strftime('%m-%d %H:%M:%S')} [{tid}] {text}")
+
+
+def monitor_bubble(text, duration=2000, border=1):
+    win = tkinter.Tk()
+    win.overrideredirect(True)
+    win.attributes("-topmost", True)
+    tkinter.Label(
+        win,
+        text=text,
+        font=("TkDefaultFont", 10),
+        bg="#222222",
+        fg="#ffffff",
+        padx=7,
+        pady=7,
+        justify="left",
+        highlightthickness=border,
+        highlightbackground="#FF8C00",
+    ).pack()
+    win.update_idletasks()
+    area = (ctypes.c_long * 4)()
+    ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0)
+    gap = round((area[3] - area[1]) * 0.012)
+    x = area[2] - win.winfo_width() - gap
+    y = area[3] - win.winfo_height() - gap
+    win.geometry(f"+{x}+{y}")
+    win.after(duration, win.destroy)
+    win.mainloop()
