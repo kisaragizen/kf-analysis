@@ -7,6 +7,8 @@ fetch all [--force] [--db 路径]
     可选参数 [--db]：决定存储到哪个数据库文件中，缺省时为默认数据库
 fetch board <fid> [--force] [--db 路径]
     获取并解析某板块的所有帖子数据，存入数据库，以 <fid> 指定板块
+    可选参数 [--force]：决定是全量更新还是增量更新，缺省时为增量更新
+    可选参数 [--db]：决定存储到哪个数据库文件中，缺省时为默认数据库
 fetch topic <link>... [--force] [--file 链接文件] [--db 路径]
     获取并解析某帖子数据，存入数据库
     命令行参数传递链接时：<link> 间以空格分隔，每个 <link> 都以引号包裹
@@ -27,13 +29,26 @@ transfer <username_list> <amount> [--memo]
 monitor topic <link>... [--file] [--store] [--force] [--criteria] [--gap] [--db 路径]
     持续监控指定主题，以 gap 秒为间隔循环增量抓取
     可选参数 [--gap]：决定监控周期（秒），缺省值为 300
-    可选参数 [--store]：指定是否要在监控时对本地数据库进行更新
+    可选参数 [--store]：决定基线取自数据库还是实时值，也决定是否对指定数据库进行写入
     可选参数 [--force]：用于指定基线轮次的行为
                         True 时为全量更新+历史信息也将参与命中判定
                         False 时为增量更新+仅基线建立后的新信息参与命中判定
     可选参数 [--criteria]：判定依据字符串，格式与意义取决于 event 的实现
                            默认监控行为「当新增回复由特定用户发出时，进行气泡提示」
-                           默认监控行为下该参数用于传递以半角逗号分隔的用户名列表"""
+                           默认监控行为下该参数用于传递以半角逗号分隔的用户名列表
+monitor board <fid>... [--file] [--store] [--force] [--criteria] [--func] [--gap] [--pages] [--db 路径]
+    持续监控指定板块，以 gap 秒为间隔循环增量抓取
+    可选参数 [--store]：仅决定基线取自数据库还是实时值，数据库是否写入要看 event 的实现
+    可选参数 [--force]：用于指定基线轮次的行为
+                        True 时为对扫描到的全部主题进行历史信息判定
+    可选参数 [--func]：决定使用哪种默认 event，缺省值为 A
+                       A 为展开优先（先展开后判定，全部动态主题入库）
+                       B 为判定优先（先判定后展开，只有命中主题入库）
+    可选参数 [--criteria]：判定依据字符串，格式与意义取决于 event 的实现
+                           在两种默认 event 中，该参数用于传递以半角逗号分隔的用户名列表
+    可选参数 [--pages]：决定每轮的扫描页数，缺省值为 2
+monitor index
+    持续监控指定用户主页（尚未实现）"""
 
 import argparse
 import json
@@ -43,7 +58,12 @@ import time
 from . import utils
 from .actions import Actions, buy_topic, transfer_money
 from .coordinator import KFanalysis
-from .monitor import monitor_topic
+from .monitor import (
+    board_event_expand_first,
+    board_event_judge_first,
+    monitor_board,
+    monitor_topic,
+)
 
 logger = logging.getLogger("kf-analysis")
 
@@ -66,18 +86,19 @@ def parse_link(link):
 def build_parser():
     parser = argparse.ArgumentParser(prog="kf-analysis")
     sub = parser.add_subparsers(dest="command", required=True)
+
     fetch = sub.add_parser("fetch")
     fetch.add_argument("target", choices=["all", "board", "topic"])
     fetch.add_argument("value", nargs="*")
     fetch.add_argument("--file")
     fetch.add_argument("--force", action="store_true")
     fetch.add_argument("--db", default="kf.db")
+
     get = sub.add_parser("get")
     get.add_argument("kind", choices=["json", "usernames", "homepage"])
     get.add_argument("link")
     get.add_argument("--dedup", action="store_true")
-    state = sub.add_parser("state")
-    state.add_argument("--db", default="kf.db")
+
     buy = sub.add_parser("buy")
     buy.add_argument("link")
     buy.add_argument("--buy", action="store_true")
@@ -85,44 +106,95 @@ def build_parser():
     transfer.add_argument("username")
     transfer.add_argument("amount")
     transfer.add_argument("--memo", default="")
+    state = sub.add_parser("state")
+    state.add_argument("--db", default="kf.db")
+
     monitor = sub.add_parser("monitor")
-    monitor.add_argument("target", choices=["topic"])
+    monitor.add_argument("target", choices=["topic", "board", "index"])
     monitor.add_argument("value", nargs="*")
     monitor.add_argument("--file")
     monitor.add_argument("--store", action="store_true")
     monitor.add_argument("--force", action="store_true")
     monitor.add_argument("--criteria", default="")
     monitor.add_argument("--gap", type=int, default=300)
+    monitor.add_argument("--pages", type=int, default=2)
+    monitor.add_argument("--func", choices=["A", "B"], default="A")
     monitor.add_argument("--db", default="kf.db")
+
     return parser
 
 
 def main():
     setup_logging()
     args = build_parser().parse_args()
+
     if args.command == "monitor":
-        links = list(args.value)
-        if args.file:
-            try:
-                with open(args.file, encoding="utf-8") as f:
-                    links += [line.strip() for line in f if line.strip()]
-            except FileNotFoundError:
-                print("无法打开指定文件")
+        if args.target == "topic":
+            links = list(args.value)
+            if args.file:
+                try:
+                    with open(args.file, encoding="utf-8") as f:
+                        links += [line.strip() for line in f if line.strip()]
+                except FileNotFoundError:
+                    print("无法打开指定文件")
+                    return
+            if not links:
+                print("待处理主题列表为空")
                 return
-        if not links:
-            print("待处理主题列表为空")
+            parsed = [parse_link(link) for link in links]
+            monitor_topic(
+                utils.load_config(),
+                parsed,
+                gap=args.gap,
+                store=args.store,
+                force=args.force,
+                criteria=args.criteria,
+                db_path=args.db,
+            )
             return
-        parsed = [parse_link(link) for link in links]
-        monitor_topic(
-            utils.load_config(),
-            parsed,
-            gap=args.gap,
-            store=args.store,
-            force=args.force,
-            criteria=args.criteria,
-            db_path=args.db,
-        )
+        elif args.target == "board":
+            boards = list(args.value)
+            if args.file:
+                try:
+                    with open(args.file, encoding="utf-8") as f:
+                        boards += [line.strip() for line in f if line.strip()]
+                except FileNotFoundError:
+                    print("无法打开指定文件")
+                    return
+            try:
+                fids = [int(b) for b in boards]
+            except ValueError:
+                print("板块序号应为数字")
+                return
+            config = utils.load_config()
+            unknown = set(fids) - set([bf for bn, bf in config.boardlist])
+            if not fids:
+                print("待处理板块列表为空")
+                return
+            elif unknown:
+                print(f"如果你确定板块序号 {unknown} 存在，", end="")
+                print("请先在 configure.json 中填写它们")
+                return
+            if args.func == "A":
+                event = board_event_expand_first
+            elif args.func == "B":
+                event = board_event_judge_first
+            monitor_board(
+                config,
+                fids,
+                gap=args.gap,
+                pages=args.pages,
+                store=args.store,
+                force=args.force,
+                criteria=args.criteria,
+                db_path=args.db,
+                event=event,
+            )
+            return
+        elif args.target == "index":
+            pass
         return
+
     if args.command in ("buy", "transfer"):
         actions = Actions(utils.load_config())
     if args.command == "buy":
@@ -144,6 +216,7 @@ def main():
         for name in names:
             print(f"向 {name} 转账：", end="")
             print(transfer_money(actions.client, name, args.amount, memo=args.memo))
+
     if args.command == "fetch":
         kf = KFanalysis(utils.load_config(), db_path=args.db)
         if args.target == "all":
@@ -183,6 +256,7 @@ def main():
                     force=args.force,
                     disp=True,
                 )
+
     if args.command == "get":
         kf = KFanalysis(utils.load_config())
         if args.kind == "homepage":
@@ -217,6 +291,7 @@ def main():
             print("数据已写入同目录文本文件")
         else:
             print("数据获取失败B")
+
     if args.command == "state":
         stats = KFanalysis(utils.load_config(), db_path=args.db).storage.stats()
         last = stats["last_record_time"]

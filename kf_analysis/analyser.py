@@ -18,8 +18,10 @@ def check_page_status(soup):
     return "normal"
 
 
-def parse_board_page(soup):
-    # ↓解析板块列表页，返回列表，其中元素形如 (topic_id, topic_sf, reply_count-1)
+def parse_board_page(soup, detail=False):
+    # detail=False 时的返回值：(topic_id, topic_sf, reply_num)
+    # detail=True 时的返回值：{topic_id, topic_sf, topic_poster, topic_labels, topic_title, reply_num, view_count}
+    # reply_num 直接返回在板块页解析到的数字，与项目口径不同，它是不包含主楼的
     result = []
     for tr in soup.find_all("tr"):
         tit = tr.find("div", class_="threadtit1")
@@ -30,11 +32,27 @@ def parse_board_page(soup):
         link = next(
             a for a in tit.find_all("a") if a.attrs["href"].startswith("read.php?tid=")
         )
-        tid = re.findall(r"tid=(\d+)", link.attrs["href"])
-        sf = re.findall(r"sf=([^&]+)", link.attrs["href"])
+        tds = tr.find_all("td")
         b6 = tr.find("ul", class_="b_tit6")
-        replynum = b6.get_text("\n", strip=True).split("\n")[0] if b6 else "0"
-        result.append((int(tid[0]), sf[0] if sf else "", int(replynum)))
+        nums = b6.get_text("\n", strip=True).split("\n") if b6 else ["0"]
+        rdict = {
+            "topic_id": int(re.findall(r"tid=(\d+)", link.attrs["href"])[0]),
+            "topic_sf": re.findall(r"sf=([^&]+)", link.attrs["href"])[0],
+            "topic_poster": tds[3].find("a").text,
+            "topic_labels": [
+                f.get_text(strip=True).strip("[]")
+                for f in tit.find_all("font")
+                if f.find_parent("a") is not link
+            ],
+            "topic_title": link.text,
+            "reply_num": int(nums[0]),
+            "view_count": None if nums[1] == "-" else int(nums[1]),
+        }
+        if detail:
+            result.append(rdict)
+        else:
+            rtuple = (rdict["topic_id"], rdict["topic_sf"], rdict["reply_num"])
+            result.append(rtuple)
     return result
 
 
@@ -42,6 +60,7 @@ def parse_topic_info(soup, topic_id, topic_sf):
     # 解析主题页头部信息，注意在本项目中主题帖第 0 楼也算做回复贴
     # 点击量与被推数不再作为持久数据进行存储，但本函数仍保留对它们的解析，方便日后调用
     header_td = soup.select_one("td[style*='line-height:25px']")
+    board_link = header_td.find_all("a", href=re.compile(r"fid="))[-1]
     topic_header = header_td.text
     numbers_split = re.findall(r"\d+", topic_header)
     numbers_split = [None] + numbers_split if len(numbers_split) == 6 else numbers_split
@@ -63,8 +82,8 @@ def parse_topic_info(soup, topic_id, topic_sf):
         ),
         "view_count": numbers_split[0],
         "tui_count": int(re.findall(r"\d+", soup.find("a", id="read_tui").text)[0]),
-        "board_id": int(re.findall(r"fid=(\d+)", header_td.a.attrs["href"])[0]),
-        "board_name": header_td.a.text,
+        "board_id": int(re.findall(r"fid=(\d+)", board_link.attrs["href"])[0]),
+        "board_name": board_link.text,
         "record_time": int(time.time()),
     }
 

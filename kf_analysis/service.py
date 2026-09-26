@@ -1,9 +1,13 @@
 import json
+import logging
 import sqlite3
 import time
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from . import utils
+
+logger = logging.getLogger("kf-analysis")
 
 
 class Client:
@@ -72,17 +76,16 @@ class Storage:
         return row is not None and row[0] == listing_count + 1
 
     def get_topic_floor_count(self, topic_id):
-        # 为什么不直接用 reply_count 属性？
-        # ——为了遇到最小化条目时也能正常返回，同时规避楼层号不连续现象带来的影响
-        # ——楼层号不连续现象虽少见但确实存在，可能是楼主行为（仅在部分分区有此权限），也可能是管理行为
+        # 要注意注意管理行为可能导致楼层号不连续现象
+        # 本项目没有为回复级空洞插入最小化条目的功能
+        # 本函数返回：楼层数量
         row = self.conn.execute(
             "SELECT COUNT(*) FROM reply WHERE topic_id=?", (topic_id,)
         ).fetchone()
         return row[0]
 
     def get_topic_max_floor(self, topic_id):
-        # 返回目标主题的最大楼层号，无法直接使用 get_topic_floor_count 函数替代
-        # 为与 monitor 模块中 last 的初值保持一致，当数据库中不存在对应条目时返回 -1
+        # 本函数返回：最大楼层号
         row = self.conn.execute(
             "SELECT MAX(floor) FROM reply WHERE topic_id=?", (topic_id,)
         ).fetchone()
@@ -103,7 +106,7 @@ class Storage:
         self.conn.commit()
 
     def save_topic_tx(self, topic_info):
-        # 全量保存。事务性处理，失败回退
+        # 事务性保存，失败回退（全量）
         with self.conn:
             tid = topic_info["topic_id"]
             self.conn.execute("DELETE FROM reply WHERE topic_id=?", (tid,))
@@ -124,7 +127,7 @@ class Storage:
             self.insert_replies(tid, topic_info)
 
     def save_incremental_tx(self, topic_info):
-        # 增量保存。事务性处理，失败回退
+        # 事务性保存，失败回退（增量）
         with self.conn:
             tid = topic_info["topic_id"]
             last_floor = self.conn.execute(
@@ -167,12 +170,40 @@ class Storage:
                     json.dumps(r["keyword_list"], ensure_ascii=False),
                 )
             )
+        # 2026-09-25 发现论坛存在一例 PID 重复现象（tid=259413, 17178L~17181L）
+        # 原实现会因此崩溃（因为 PID 被定义为 reply 表的主键），现实现只保留 PID 的初次出现
+        before = self.conn.total_changes
         self.conn.executemany(
-            "INSERT INTO reply (topic_id, reply_id, topic_sf, floor, username, homepage_id, homepage_sf, "
+            "INSERT OR IGNORE INTO reply (topic_id, reply_id, topic_sf, floor, username, homepage_id, homepage_sf, "
             "reply_box_color, reply_time, reply_text, record_time, status, image_list, complete, "
             "hidden_content, keyword_list) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
+        ignored = len(rows) - (self.conn.total_changes - before)
+        if ignored:
+            counts = {}
+            for r in rows:
+                counts[r[1]] = counts.get(r[1], 0) + 1
+            marks = sorted(counts)
+            dup = []
+            for i in range(0, len(marks), 900):
+                chunk = marks[i : i + 900]
+                holders = ",".join("?" * len(chunk))
+                stored = dict(
+                    self.conn.execute(
+                        f"SELECT reply_id, COUNT(*) FROM reply WHERE topic_id=? AND reply_id IN ({holders}) "
+                        f"GROUP BY reply_id",
+                        (tid, *chunk),
+                    )
+                )
+                dup += [pid for pid in chunk if stored.get(pid, 0) < counts[pid]]
+            logger.warning(
+                utils.log_error(
+                    "W101",
+                    "service.insert_replies",
+                    f"帖子 ({tid}) PID 重复现象 {dup}",
+                )
+            )
 
     def stats(self):
         topic_count = self.conn.execute("SELECT COUNT(*) FROM topic").fetchone()[0]

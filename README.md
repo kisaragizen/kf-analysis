@@ -2,10 +2,10 @@
 
 绯月论坛活跃度数据获取与分析项目。  
 v2.0.0 架构重构完成；v2.1.0 支持了部分论坛动作（发帖/编辑/私信/买贴/转账）；  
-v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0 新增了持续监控功能。  
+v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0-v2.4.0 新增了持续监控功能。  
 绝大部分功能同时支持 CLI 与包内函数两种调用形式（小部分风险论坛动作只支持包内函数调用）。  
 支持板块级与主题级增量抓取；实现“数据获取→数据分析→发帖”全流程自动化接口。  
-经 406,158 条回复数据实测，数据抓取与入库结果符合预期（2026-09-18 时数据）。
+经 935,040 条回复数据实测，数据抓取与入库结果符合预期（2026-09-26 时数据）。
 
 * 本项目运行在 bbs.kfpromax.com 域名下。  
 * 本项目的文件内注释比 README.md 更详细。
@@ -56,16 +56,25 @@ get homepage <link>             # 输出指定用户的主页信息
 **monitor 命令**
 ```text
 monitor topic <link>... [--file] [--store] [--force] [--criteria] [--gap] [--db]
+monitor board <fid>... [--file] [--store] [--force] [--criteria] [--func] [--gap] [--pages] [--db]
 ```
 
 * `--gap`：决定监控周期（秒），缺省值为 300
 * `--store`：指定是否要在监控时对本地数据库进行更新
+    * 主题监控中，决定基线取自数据库还是实时值，也决定是否对指定数据库进行写入
+    * 板块监控中，仅决定基线取自数据库还是实时值，数据库是否写入要看 event 的实现
 * `--force`：用于指定基线轮次的行为
-    * True 时为全量更新+历史信息也将参与命中判定
-    * False 时为增量更新+仅基线建立后的新信息参与命中判定
+    * True 时：全量更新，历史信息页参与命中判定
+    * False 时：增量更新，只有新信息参与命中判定
 * `--criteria`：判定依据字符串，格式与意义取决于 event 的实现
-* 默认监控行为「当新增回复由特定用户发出时，进行气泡提示」
-* 默认监控行为下该参数用于传递以半角逗号分隔的用户名列表
+* `--page`：板块监控中决定每轮扫描页数的参数，缺省值为 2
+* 默认事件函数：
+    * 主题监控：「当新增回复由特定用户发出时，进行气泡提示」
+    * 板块监控：由 `--func` 参数指定要使用哪个默认事件函数：
+        * `--func A`：先展开主题后判定命中，全部动态主题入库
+        * `--func B`：先判定命中后展开主题，只有命中主题入库
+        * 默认命中行为都是气泡提示
+* 默认事件函数中 `--criteria` 的语义：以半角逗号分隔的用户名列表
 
 **buy / transfer 命令**
 ```text
@@ -87,6 +96,7 @@ python -m kf_analysis fetch topic "https://bbs.kfpromax.com/read.php?tid=00000&s
 python -m kf_analysis get json "https://bbs.kfpromax.com/read.php?tid=00000&sf=fff"
 python -m kf_analysis transfer "user1, user2, user3" 0.5 --memo "thanks~"
 python -m kf_analysis monitor topic --file links.txt --criteria "user1, user2, user3"
+python -m kf_analysis monitor board --file fids.txt --criteria "user1, user2, user3" --db kf.db
 ```
 
 
@@ -100,7 +110,7 @@ from kf_analysis import analyser
 analyser.check_page_status(soup)                                      # 判断主题的可访问性
 analyser.parse_topic_info(soup, topic_id, topic_sf)                   # 解析某主题的头信息并返回 dict
 analyser.parse_replies(page_list, topic_id, topic_sf, username_dict)  # 解析所有页面的回复并返回 list
-analyser.parse_board_page(soup)                                       # 解析板块页主题链接并返回 list
+analyser.parse_board_page(soup, detail=False)                         # 解析板块页主题链接并返回 list
 analyser.parse_profile_page(soup)                                     # 解析用户主页信息，返回 dict
 ```
 
@@ -114,13 +124,13 @@ from kf_analysis.coordinator import KFanalysis
 
 cfg = utils.load_config()
 kf = KFanalysis(cfg, db_path="kf.db")
-kf.fetch_all(force=False)                            # ↔ fetch all
-kf.fetch_board(fid, force=False)                     # ↔ fetch board
-kf.fetch_onetopic(tid, sf, force=False)              # ↔ fetch topic
-data = kf.get_topic_json(tid, sf)                    # ↔ get json
-names = kf.get_topic_usernames(tid, sf, dedup=False) # ↔ get usernames
-info = kf.get_homepage(uid, sf, db=False)            # ↔ get homepage
-stats = kf.storage.stats()                           # ↔ state
+kf.fetch_all(force=False)                             # ↔ fetch all
+kf.fetch_board(fid, force=False)                      # ↔ fetch board
+kf.fetch_onetopic(tid, sf, force=False)               # ↔ fetch topic
+data = kf.get_topic_json(tid, sf)                     # ↔ get json
+names = kf.get_topic_usernames(tid, sf, dedup=False)  # ↔ get usernames
+info = kf.get_homepage(uid, sf, db=False)             # ↔ get homepage
+stats = kf.storage.stats()                            # ↔ state
 ```
 
 * `fetch_all` 是多次 `fetch_board` 的调用；
@@ -143,14 +153,14 @@ stats = kf.storage.stats()                           # ↔ state
 from kf_analysis import actions
 
 acts = actions.Actions(config)
-acts.post_reply(tid, sf, content, keywords)                        # 回复发帖
-acts.post_topic(fid, content, title, keywords)                     # 主题发帖
-acts.edit_post(tid, sf, pid, article, content, title, keywords)    # 帖子编辑
-acts.get_post_content(tid, sf, pid, article)                       # 原始内容获取
-actions.buy_topic(client, topic_id, topic_sf, mode)                # 主题购买
-actions.transfer_money(client, username, amount, memo)             # 贡献转账
-actions.send_message(client, username, title, content, save)       # 私信发送
-actions.search_user_hp(client, username)                           # 主页链接探测
+acts.post_reply(tid, sf, content, keywords)                      # 回复发帖
+acts.post_topic(fid, content, title, keywords)                   # 主题发帖
+acts.edit_post(tid, sf, pid, article, content, title, keywords)  # 帖子编辑
+acts.get_post_content(tid, sf, pid, article)                     # 原始内容获取
+actions.buy_topic(client, topic_id, topic_sf, mode)              # 主题购买
+actions.transfer_money(client, username, amount, memo)           # 贡献转账
+actions.send_message(client, username, title, content, save)     # 私信发送
+actions.search_user_hp(client, username)                         # 主页链接探测
 ```
 
 * 详细说明见 `actions.py` 对应位置的注释。
@@ -161,9 +171,17 @@ actions.search_user_hp(client, username)                           # 主页链�
 ```python
 from kf_analysis import monitor
 
-monitor.monitor_topic(config, links, gap, store, force, db_path, event, action, criteria) # 持续监控主题
-monitor.monitor_event(data, criteria)                                                     # 命中判定函数，可自定义行为
-monitor.monitor_action(matches)                                                           # 命中执行函数，可自定义行为
+monitor.monitor_topic(config, links, gap, store, force, db_path, event, action, criteria)        # 持续监控主题
+monitor.monitor_board(config, fids, gap, pages, store, force, db_path, event, action, criteria)  # 持续监控板块
+
+# 默认事件函数（event）
+monitor.topic_event_default(...)        # 主题级默认事件函数
+monitor.board_event_expand_first(...)   # 板块级①：先展开后判定
+monitor.board_event_judge_first(...)    # 板块级②：先判定后展开
+
+# 默认执行函数（action）
+monitor.topic_action_default(...)       # 主题级：气泡提示命中信息
+monitor.board_action_default(...)       # 板块级：气泡提示命中信息
 ```
 
 * 详细说明见 `monitor.py` 对应位置的注释。
@@ -288,6 +306,11 @@ hp.db                     # 主页信息数据库·自动生成
 
 
 ## 更新日志
+* 2026.09.26 v2.4.0
+    * 实现对板块进行持续监控
+    * 修复二级板块名称解析错误
+    * 修复因 PID 重复现象导致的入库失败
+    * 修复因楼层空洞现象导致的增量判断错误
 * 2026.09.17 v2.3.3
     * 支持通过 force 参数控制基线轮次是否参与命中判定
     * 修复主题头信息无法被 event 函数利用的问题
@@ -325,5 +348,5 @@ hp.db                     # 主页信息数据库·自动生成
 
 
 ## 更新展望
-* 板块级与主页级监控功能的实现
+* 主页级监控功能的实现
 * fetch 与 get 支持对用户主题列表的抓取

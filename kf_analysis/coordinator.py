@@ -16,9 +16,23 @@ class KFanalysis:
         self.client = Client(config)
         self.storage = Storage(db_path)
 
-    def get_oneboard_url(self, fid, disp=False):
+    def get_oneboard_url(
+        self,
+        fid,
+        disp=False,
+        detail=False,
+        order="lastpost",
+        pages=10,
+        recheck=True,
+    ):
+        # detail=False 时的返回值：(topic_id, topic_sf, reply_num)
+        # detail=True 时的返回值：{topic_id, topic_sf, topic_poster, topic_labels, topic_title, reply_num, view_count}
+        # pages 为抓取页数，order=lastpost 为最后回复序，order=postdate 为主题发表序
         def get_onepage_url(page):
-            url = f"https://bbs.kfpromax.com/thread.php?fid={fid}&orderway=lastpost&page={page}"
+            url = (
+                "https://bbs.kfpromax.com/thread.php?"
+                f"fid={fid}&orderway={order}&page={page}"
+            )
             try:
                 response = self.client.get(url)
                 if response.status_code != 200:
@@ -29,7 +43,8 @@ class KFanalysis:
                     )
                     return []
                 return analyser.parse_board_page(
-                    BeautifulSoup(response.content, "lxml")
+                    BeautifulSoup(response.content, "lxml"),
+                    detail=detail,
                 )
             except Exception:
                 logger.error(
@@ -40,18 +55,22 @@ class KFanalysis:
                 return []
 
         result = []
-        print()
-        for page in range(1, 11):
+        if disp:
+            print("\n=======================================================\n")
+        for page in range(1, pages + 1):
+            if page > 10:
+                break
             if disp:
                 print(f"板块 {fid} 第 {page} 页访问成功")
             result += get_onepage_url(page)
             time.sleep(self.config.timegap_board_in)
-        result = get_onepage_url(1) + result
-        # 为避免翻页期间有帖子浮动到首页导致提取不完全，最后再获取一次第一页的数据，插入列表最前并去重
-        # 这种方法是建立在【10×timegap_board_in 秒内新增或浮动主题帖数量不超过该板块的单页容量】假设上的
+        # 为了避免翻页期间有帖子浮动至首页导致提取不完全，可以「再次获取首页→插入最前→去重」
+        # 这一行为建立在「pages × timegap_board_in 秒内浮动主题数不超过单页容量」的假设上
+        if recheck:
+            result = get_onepage_url(1) + result
         seen = {}
         for x in result:
-            seen.setdefault(x[0], x)
+            seen.setdefault(x["topic_id"] if detail else x[0], x)
         result_dedup = list(seen.values())
         if disp:
             print(f"↑ 板块 {fid} 解析完成，提取到 {len(result_dedup)} 条主题\n")
@@ -66,11 +85,13 @@ class KFanalysis:
         total=1,
         force=False,
         return_header=False,
+        floor=None,
     ):
         # 访问并解析一个 topic，始终获取第 1 页用于解析 topic 头信息（用于单独调用时的增量判断）
         # force 参数缺省时为普通增量更新，即便此前数据库中不存在对应 topic 条目也能正常运行
         # force 参数为 True 时为强制全量更新，会覆盖数据库中对应 topic 条目中的旧数据
         # return_header 参数为 True 时，即便不存在增量也会返回主题头信息，附带 header_only 标记
+        # floor 参数非 None 时将使用 floor 作为增量判断中的已知水位，否则将使用数据库当前状态
         # 关于返回值：无更新=None；有更新=topic_info；失败=False；帖子存在但无法访问="closed"或"deleted"
         # 关于返回值：在普通增量更新模式下，topic_info 会附带 incremental 标记，用于帮助上层调用决定存储策略
         topic_url = utils.topic_url(topic_id, topic_sf)
@@ -98,7 +119,9 @@ class KFanalysis:
             )
             return False
         topic_info = analyser.parse_topic_info(soup, topic_id, topic_sf)
-        db_total = self.storage.get_topic_floor_count(topic_id)
+        db_total = self.storage.get_topic_max_floor(topic_id) + 1
+        if type(floor) is int:
+            db_total = floor + 1
         page_sources = [(1, response.content)]
         current_page = topic_url
         if force or db_total == 0:
@@ -159,6 +182,7 @@ class KFanalysis:
         index=0,
         total=1,
         return_header=False,
+        floor=None,
     ):
         if (
             not force
@@ -178,6 +202,7 @@ class KFanalysis:
                 total=total,
                 force=force,
                 return_header=return_header,
+                floor=floor,
             )
         except Exception:
             logger.error(
@@ -188,11 +213,11 @@ class KFanalysis:
                 )
             )
             return False
-        # 帖子被关闭或被删除标志，代表帖子曾真实存在，最小化条目存储
+        # 帖子被关闭或被删除标志，最小化条目存储
         if data in ("closed", "deleted") and not self.storage.has_topic(topic_id):
             self.storage.insert_closed_topic(topic_id, topic_sf, status=data)
             return data
-        # 链接键入错误与其他失败态，帖子曾真实存在性为否或无法判定，不进行条目存储
+        # 链接键入错误与其他失败，不进行条目存储
         if not isinstance(data, dict):
             return data
         if data.get("header_only"):
@@ -224,7 +249,7 @@ class KFanalysis:
 
     def get_topic_usernames(self, topic_id, topic_sf, dedup=False):
         data = self.get_onetopic_info(topic_id, topic_sf, force=True)
-        # "closed"/"deleted"/"incorrect"/False 标志原样返回
+        # "closed"/"deleted"/False 标志原样返回
         if not isinstance(data, dict):
             return data
         usernames = [r["username"] for r in data["reply_list"]]
@@ -234,7 +259,7 @@ class KFanalysis:
 
     def get_topic_json(self, topic_id, topic_sf):
         data = self.get_onetopic_info(topic_id, topic_sf, force=True)
-        # "closed"/"deleted"/"incorrect"/False 标志原样返回
+        # "closed"/"deleted"/False 标志原样返回
         if not isinstance(data, dict):
             return data
         topic = {
