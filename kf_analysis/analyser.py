@@ -279,3 +279,96 @@ def parse_profile_page(soup):
             key, val = line.split("：", 1)
             fields[key.strip()] = val.strip()
     return fields
+
+
+def parse_index_page(soup):
+    # 论坛首页包含：最新被推=左上A/最新主题=左下B/最新动态=正中C
+    # 本函数负责解析对列表B和列表C进行解析；不认为列表A具有统计价值
+    # 因为列表A具有以下隐性限制：①老帖被推不上榜；②每个板块都有最大上榜名额
+    # 所以“通过持续监控列表A获得首页相关板块的完整被推信息”是不可能的
+    # {"active": [...], "new": [...]}
+    # new: {topic_id, topic_sf, topic_title, time_text}
+    # active: {topic_id, topic_sf, topic_poster, topic_title, reply_num, time_text, label}
+    # reply_num 为不包含主楼的回复量，不过需要注意首页会将所有大于 99 回复量的主题都显示为 99+
+    # 无法在不进一步展开的情况下得知对应主题的准确回复量，此时，本函数会将 reply_num 记为 None
+    # time_text 为相对时间，形如：1分钟内/3分钟前/5小时前/7天前
+    # 需要注意两个列表中该字段的语义不同：active 中为最后动态时刻，new 中为发表时刻
+    # label 为首页特有的主题标签：讨论/日记/求助/聊天/数码，分别对应一个或多个板块
+    active = []
+    topic_eles = soup.find_all("div", class_="indexlbtc")
+    topic_eles = [d.find("a") for d in topic_eles]
+    for ele in topic_eles:
+        topic_id, topic_sf = re.findall(r'[?&]tid=([^&]+)&sf=([^&]+)', ele["href"])[0]
+        topic_title = ele["title"].removeprefix("《").removesuffix("》")
+        reply_num = ele.find("span", class_="indexlbtc_h").get_text(strip=True)
+        reply_num = int(reply_num) if reply_num.isdigit() else None
+        label = ele.find("span", class_="indexlbtc_l").get_text(strip=True)
+        time_text = ele.find("span", class_="indexlbtc_s").get_text(strip=True)
+        topic_poster = ele["uname"]
+        active.append(
+            {
+                "topic_id": int(topic_id),
+                "topic_sf": topic_sf,
+                "topic_poster": topic_poster,
+                "topic_title": topic_title,
+                "reply_num": reply_num,
+                "time_text": time_text,
+                "label": label,
+            }
+        )
+    new = []
+    topic_eles = soup.find_all("div", class_="rightboxa")[1].find_all("a")
+    for ele in topic_eles:
+        topic_id, topic_sf = re.findall(r'[?&]tid=([^&]+)&sf=([^&]+)', ele["href"])[0]
+        topic_title = ele["title"].removeprefix("《").removesuffix("》")
+        time_text = ele.find("span", class_="k_fr").get_text(strip=True)
+        new.append(
+            {
+                "topic_id": int(topic_id),
+                "topic_sf": topic_sf,
+                "topic_title": topic_title,
+                "time_text": time_text,
+            }
+        )
+    return {"active": active, "new": new}
+
+
+def parse_search_page(soup):
+    # 本函数负责对搜索结果页进行解析（也能够用于对用户主题页的解析）
+    # 返回值形如 {"results": [...], "status": (总页数, 总结果数, 剩余搜索次数)}
+    # results 元素为 {topic_id, topic_sf, topic_title, board_name, topic_poster, last_reply_time}
+    # 搜索结果页无法直接解析主题所属板块的 fid，上级调用可以根据 coordinator 提供的对照表进行转换
+    # 需要注意 last_reply_time 不是主题发表时间而是主题最后被回复的时间
+    if soup.find("a", href=re.compile(r"javascript:history\.go\(-1\)")):
+        return False
+    result = []
+    trs = soup.select("table.thread1 tr")
+    for tr in trs[2:-1]:
+        tds = tr.find_all("td")
+        links = tr.find_all("a")
+        pattern = r'[?&]tid=([^&]+)&sf=([^&]+)'
+        topic_id, topic_sf = re.findall(pattern, links[0]["href"])[0]
+        topic_title = links[0].get_text(strip=True)
+        board_name = tds[1].get_text(strip=True)
+        topic_poster = links[1].get_text(strip=True)
+        last_reply_time = links[1].next_sibling.next_sibling.strip()
+        result.append(
+            {
+                "topic_id": int(topic_id),
+                "topic_sf": topic_sf,
+                "topic_title": topic_title,
+                "board_name": board_name,
+                "topic_poster": topic_poster,
+                "last_reply_time": last_reply_time,
+            }
+        )
+    head = trs[0].get_text(" ", strip=True)
+    total = re.search(r"共搜索到了\s*(\d+)\s*条信息", head)
+    remain = re.search(r"本日剩余搜索次数\s*(\d+)\s*次", head)
+    last = re.search(r"…(\d+)页", head)
+    status = (
+        int(last.group(1)) if last else 1,
+        int(total.group(1)),
+        int(remain.group(1)),
+    )
+    return {"results": result, "status": status}

@@ -1,4 +1,5 @@
 import logging
+import re
 import sqlite3
 import time
 from bs4 import BeautifulSoup
@@ -6,6 +7,35 @@ from . import analyser, utils
 from .service import Client, Storage
 
 logger = logging.getLogger("kf-analysis")
+
+# 板块名有两种：①板块索引栏显示名称；②板块真实名称
+# 前者在 configure.json 中有定义（boardlist），后者定义如下
+BOARD_IDS = {
+    "论坛管理": 4,
+    "自由讨论区": 5,
+    "无限制资源区": 9,
+    "Galgame BitTorrent区": 16,
+    "游戏安装疑难互助": 24,
+    "寻求资源": 36,
+    "Galgame 网络硬盘区": 41,
+    "GalGame综合讨论区": 52,
+    "个人日记": 56,
+    "GAL本子区": 57,
+    "CG画册资源共享区": 67,
+    "ACG音乐资源共享区": 68,
+    "动漫综合讨论区": 84,
+    "电子产品讨论区": 86,
+    "ACG实物讨论区": 87,
+    "动画资源共享区": 92,
+    "自绘美少女": 94,
+    "图片/作品出处询问版": 96,
+    "GalGame推荐区": 102,
+    "GalGame新作动态": 106,
+    "文字类作品区": 115,
+    "水楼林立": 125,
+    "漫画轻小说共享区": 127,
+    "LIVE类资源分享区": 163,
+}
 
 
 class KFanalysis:
@@ -320,3 +350,91 @@ class KFanalysis:
                     (uid, username, sf, regdate, 1 if regdate else 0),
                 )
         return data
+
+    def get_index_url(self):
+        # 首页动态信息获取的请求层
+        # 返回值说明详见解析层注释（analyser.parse_index_page）
+        url = "https://bbs.kfpromax.com/index.php"
+        response = self.client.get(url)
+        if response.status_code != 200:
+            logger.error(utils.log_error("E108", "get_index_url", "INDEX_PAGE"))
+            return False
+        data = analyser.parse_index_page(BeautifulSoup(response.content, "lxml"))
+        return data
+
+    def get_search_results(
+        self,
+        keyword=None,
+        authorid=None,
+        fid="all",
+        store=False,
+        force=False,
+    ):
+        # 搜索结果信息获取的请求层，负责构造搜索请求与翻页
+        # 对于主题板块的归属，解析层只返回板块名，本函数负责将板块名映射为 fid
+        # keyword 为标题关键字，authorid 为用户 uid，两者必选其一且不可同时指定
+        # fid 可以在标题关键字搜索时限定板块，并非本项目进行了什么后置过滤，而是论坛自带但被隐藏的功能
+        # 论坛支持使用 sid 来保持搜索会话，不过经过实测，保持相同 sid 时与保持相同 url 参数时的搜索行为一致
+        # 搜索结果相同，都具备翻页稳定性，并且都在翻页时消耗搜索次数余额，所以本函数选择不依赖 sid
+        # store 为 True 时将各条结果的主题逐条抓取后写入实例自身的库，为 False 时完全不写库
+        # 入库方式与 fetch 系列完全一致，force 的含义也相同：True=全量更新，False=增量更新
+        if not (keyword or authorid) or (keyword and authorid):
+            print("关键词与用户 uid 只能指定且必须指定其中之一\n")
+            return False
+        if authorid:
+            argues = f"authorid={authorid}"
+        else:
+            argues = f"step=2&keyword={keyword}&seekfid={fid}"
+
+        def get_onepage_url(argues, page):
+            url = f"https://bbs.kfpromax.com/search.php?{argues}&page={page}"
+            response = self.client.get(url)
+            if response.status_code != 200:
+                logger.error(
+                    utils.log_error(
+                        "E109",
+                        "get_search_results",
+                        f"{argues} | PAGE {page}",
+                    )
+                )
+                return None
+            result = BeautifulSoup(response.content, "lxml")
+            result = analyser.parse_search_page(result)
+            return result
+
+        result = []
+        page_data = get_onepage_url(argues, 1)
+        if page_data is False:
+            print("搜索结果为空")
+            return False
+        elif page_data is None:
+            print("搜索请求失败")
+            return False
+        last_page, total, remain = page_data["status"]
+        result += page_data["results"]
+        print(
+            f"结果数量：{total} 条\n"
+            f"剩余次数：{remain + 1} → {remain - last_page + 1}\n\n"
+            f"PAGE 1 / {last_page} 解析完成"
+        )
+        for page in range(2, last_page + 1):
+            page_data = get_onepage_url(argues, page)
+            if not page_data:
+                print(f"搜索请求在第 {page} 页失败，请重试")
+                return False
+            result += page_data["results"]
+            print(f"PAGE {page} / {last_page} 解析完成")
+        for row in result:
+            row["board_id"] = BOARD_IDS.get(row["board_name"])
+        if store:
+            print()
+            for index, row in enumerate(result):
+                self.fetch_onetopic(
+                    row["topic_id"],
+                    row["topic_sf"],
+                    force=force,
+                    disp=True,
+                    index=index,
+                    total=total,
+                )
+        return result

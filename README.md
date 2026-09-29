@@ -1,11 +1,12 @@
 # kf-analysis
 
-绯月论坛活跃度数据获取与分析项目。  
+绯月论坛活跃度数据获取与分析项目（v2.5.0）。  
 v2.0.0 架构重构完成；v2.1.0 支持了部分论坛动作（发帖/编辑/私信/买贴/转账）；  
-v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0-v2.4.0 新增了持续监控功能。  
+v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0-v2.4.0 新增了持续监控功能；  
+截止 v2.5.0，重构完成时构想的所有功能均已实现，今后将以优化与修正为主。  
 绝大部分功能同时支持 CLI 与包内函数两种调用形式（小部分风险论坛动作只支持包内函数调用）。  
 支持板块级与主题级增量抓取；实现“数据获取→数据分析→发帖”全流程自动化接口。  
-经 935,040 条回复数据实测，数据抓取与入库结果符合预期（2026-09-26 时数据）。
+经 936,737 条回复数据实测，数据抓取与入库结果符合预期（2026-09-29 时数据）。
 
 * 本项目运行在 bbs.kfpromax.com 域名下。  
 * 本项目的文件内注释比 README.md 更详细。
@@ -25,6 +26,7 @@ v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0-v2.4.0 新增
 CLI 命令主要分为四类：  
 * `get`：获取并解析数据，将结果输出到屏幕或写入文本文件。  
 * `fetch`：获取并解析数据，将结果写入默认的或指定的数据库。  
+* `search`：按标题关键词或用户 uid 搜索主题，可选是否同步入库。  
 * `monitor`：对指定对象进行持续监控，按固定周期循环增量抓取。  
 * `buy`、`transfer`：主题查价/购买；贡献转账。  
 出于风险性与实用性考量，并未支持所有论坛动作的 CLI 调用，  
@@ -53,6 +55,15 @@ get homepage <link>             # 输出指定用户的主页信息
 * `get json` 命令会将获取到的数据写入同目录的文本文件。  
 * `--dedup`：指定是否对获取到的用户名列表进行去重（保留首次出现的顺序）。
 
+**search 命令**
+```text
+search --keyword <keyword> [--fid] [--store] [--force] [--db]  # 按标题关键词搜索相关主题
+search --authorid <authorid> [--store] [--force] [--db]        # 按用户 uid 搜索发表过的主题
+```
+
+* `--keyword` 与 `--authorid` 不能同时使用。
+* `--fid` 仅在关键词搜索时有效，缺省时为全站搜索。
+
 **monitor 命令**
 ```text
 monitor topic <link>... [--file] [--store] [--force] [--criteria] [--gap] [--db]
@@ -67,7 +78,7 @@ monitor board <fid>... [--file] [--store] [--force] [--criteria] [--func] [--gap
     * True 时：全量更新，历史信息页参与命中判定
     * False 时：增量更新，只有新信息参与命中判定
 * `--criteria`：判定依据字符串，格式与意义取决于 event 的实现
-* `--page`：板块监控中决定每轮扫描页数的参数，缺省值为 2
+* `--pages`：板块监控中决定每轮扫描页数的参数，缺省值为 2
 * 默认事件函数：
     * 主题监控：「当新增回复由特定用户发出时，进行气泡提示」
     * 板块监控：由 `--func` 参数指定要使用哪个默认事件函数：
@@ -94,6 +105,8 @@ state [--db]  # 返回数据库当前状态
 ```
 python -m kf_analysis fetch topic "https://bbs.kfpromax.com/read.php?tid=00000&sf=fff"
 python -m kf_analysis get json "https://bbs.kfpromax.com/read.php?tid=00000&sf=fff"
+python -m kf_analysis search --keyword "偶像" --store --db kf.db
+python -m kf_analysis search --authorid 000000
 python -m kf_analysis transfer "user1, user2, user3" 0.5 --memo "thanks~"
 python -m kf_analysis monitor topic --file links.txt --criteria "user1, user2, user3"
 python -m kf_analysis monitor board --file fids.txt --criteria "user1, user2, user3" --db kf.db
@@ -112,6 +125,8 @@ analyser.parse_topic_info(soup, topic_id, topic_sf)                   # 解析�
 analyser.parse_replies(page_list, topic_id, topic_sf, username_dict)  # 解析所有页面的回复并返回 list
 analyser.parse_board_page(soup, detail=False)                         # 解析板块页主题链接并返回 list
 analyser.parse_profile_page(soup)                                     # 解析用户主页信息，返回 dict
+analyser.parse_index_page(soup)                                       # 解析首页动态，返回 dict
+analyser.parse_search_page(soup)                                      # 解析搜索结果页，返回 dict
 ```
 
 * 详细说明见 `analyser.py` 对应位置的注释。
@@ -127,6 +142,9 @@ kf = KFanalysis(cfg, db_path="kf.db")
 kf.fetch_all(force=False)                             # ↔ fetch all
 kf.fetch_board(fid, force=False)                      # ↔ fetch board
 kf.fetch_onetopic(tid, sf, force=False)               # ↔ fetch topic
+kf.get_search_results(keyword, store=False)           # ↔ search --keyword
+kf.get_search_results(authorid=uid, store=False)      # ↔ search --authorid
+kf.get_index_url()                                    # 获取首页动态
 data = kf.get_topic_json(tid, sf)                     # ↔ get json
 names = kf.get_topic_usernames(tid, sf, dedup=False)  # ↔ get usernames
 info = kf.get_homepage(uid, sf, db=False)             # ↔ get homepage
@@ -135,6 +153,12 @@ stats = kf.storage.stats()                            # ↔ state
 
 * `fetch_all` 是多次 `fetch_board` 的调用；
 * `fetch_board` 是多次 `fetch_onetopic` 的调用。
+* `get_search_results` 相关说明：
+    * `keyword` 与 `authorid` 只能指定且必须指定其中之一，`fid` 仅在关键词搜索时有效；
+    * `keyword` 需为 **GBK 百分号编码**形式，需要调用方前置处理（CLI 调用时无需在意）。
+* `get_index_url` 相关说明：
+    * 返回值形如 `{"active": [...], "new": [...]}`；
+    * `active` 为首页正中的“最近动态主题”，`new` 为首页左下的“最新发表主题”。
 * `fetch_onetopic` 相关说明：
     * 返回值为 `dict` 时代表获取成功（增量更新时自动附带 `incremental` 标记）；
     *  `None` 无增量，`False` 访问失败，`"closed"` 主题关闭，`"deleted"` 主题删除；
@@ -306,6 +330,10 @@ hp.db                     # 主页信息数据库·自动生成
 
 
 ## 更新日志
+* 2026.09.29 v2.5.0
+    * 支持按标题关键词搜索主题并根据板块过滤
+    * 支持按用户 uid 搜索发表过的主题
+    * 支持获取论坛首页动态
 * 2026.09.26 v2.4.0
     * 实现对板块进行持续监控
     * 修复二级板块名称解析错误
@@ -345,8 +373,3 @@ hp.db                     # 主页信息数据库·自动生成
     * 解析优化（已弃用）
 * 2025.05.11 v1.0.0
     * 初始版本（已弃用）
-
-
-## 更新展望
-* 主页级监控功能的实现
-* fetch 与 get 支持对用户主题列表的抓取

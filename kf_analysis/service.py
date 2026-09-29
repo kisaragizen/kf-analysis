@@ -76,7 +76,7 @@ class Storage:
         return row is not None and row[0] == listing_count + 1
 
     def get_topic_floor_count(self, topic_id):
-        # 要注意注意管理行为可能导致楼层号不连续现象
+        # 要注意管理行为可能导致楼层号不连续现象
         # 本项目没有为回复级空洞插入最小化条目的功能
         # 本函数返回：楼层数量
         row = self.conn.execute(

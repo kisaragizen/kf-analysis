@@ -13,6 +13,10 @@ fetch topic <link>... [--force] [--file 链接文件] [--db 路径]
     获取并解析某帖子数据，存入数据库
     命令行参数传递链接时：<link> 间以空格分隔，每个 <link> 都以引号包裹
     文件形式传递链接时：每行一个链接，不需要带引号
+search [--keyword | --authorid] [--fid] [--store] [--force] [--db 路径]
+    按标题关键词或用户 uid 搜索主题，可选是否同步入库
+    要注意 keyword 与 authorid只能指定且必须指定其中之一
+    可选参数 [--fid]：仅在关键词搜索时有效，缺省时为全站搜索
 get json <link>
     获取并解析某帖子数据，不操作数据库，仅支持单个链接
     解析完成后会将数据存储到同目录文本文件中（JSON）
@@ -56,7 +60,7 @@ import logging
 import re
 import time
 from . import utils
-from .actions import Actions, buy_topic, transfer_money
+from .actions import Actions, buy_topic, gbk_form, transfer_money
 from .coordinator import KFanalysis
 from .monitor import (
     board_event_expand_first,
@@ -98,6 +102,15 @@ def build_parser():
     get.add_argument("kind", choices=["json", "usernames", "homepage"])
     get.add_argument("link")
     get.add_argument("--dedup", action="store_true")
+
+    search = sub.add_parser("search")
+    search_target = search.add_mutually_exclusive_group(required=True)
+    search_target.add_argument("--keyword")
+    search_target.add_argument("--authorid")
+    search.add_argument("--fid", default="all")
+    search.add_argument("--store", action="store_true")
+    search.add_argument("--force", action="store_true")
+    search.add_argument("--db", default="kf.db")
 
     buy = sub.add_parser("buy")
     buy.add_argument("link")
@@ -256,6 +269,22 @@ def main():
                     force=args.force,
                     disp=True,
                 )
+
+    if args.command == "search":
+        kf = KFanalysis(utils.load_config(), db_path=args.db)
+        keyword = (
+            gbk_form({"keyword": args.keyword}).decode().split("=", 1)[1]
+            if args.keyword
+            else None
+        )
+        kf.get_search_results(
+            keyword=keyword,
+            authorid=args.authorid,
+            fid=args.fid,
+            store=args.store,
+            force=args.force,
+        )
+        return
 
     if args.command == "get":
         kf = KFanalysis(utils.load_config())
