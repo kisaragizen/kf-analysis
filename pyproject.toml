@@ -1,13 +1,15 @@
 [project]
 name = "kf-analysis"
-version = "2.5.0"
+version = "2.5.1"
 requires-python = ">=3.12"
-description = "KF论坛活跃度分析与数据获取程序"
+description = "绯月论坛活跃度数据获取与分析工具，提供论坛操作接口"
 dependencies = [
     "requests",
     "beautifulsoup4",
     "lxml",
-    "matplotlib>=3.11.1",
+    "matplotlib",
+    "numpy",
+    "Pillow",
 ]
 
 [build-system]

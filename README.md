@@ -1,12 +1,12 @@
 # kf-analysis
 
-绯月论坛活跃度数据获取与分析项目（v2.5.0）。  
+绯月论坛活跃度数据获取与分析项目（v2.5.1）。  
 v2.0.0 架构重构完成；v2.1.0 支持了部分论坛动作（发帖/编辑/私信/买贴/转账）；  
 v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0-v2.4.0 新增了持续监控功能；  
 截止 v2.5.0，重构完成时构想的所有功能均已实现，今后将以优化与修正为主。  
 绝大部分功能同时支持 CLI 与包内函数两种调用形式（小部分风险论坛动作只支持包内函数调用）。  
 支持板块级与主题级增量抓取；实现“数据获取→数据分析→发帖”全流程自动化接口。  
-经 936,737 条回复数据实测，数据抓取与入库结果符合预期（2026-09-29 时数据）。
+经 937,219 条回复数据实测，数据抓取与入库结果符合预期（2026-10-01 时数据）。
 
 * 本项目运行在 bbs.kfpromax.com 域名下。  
 * 本项目的文件内注释比 README.md 更详细。
@@ -57,12 +57,19 @@ get homepage <link>             # 输出指定用户的主页信息
 
 **search 命令**
 ```text
-search --keyword <keyword> [--fid] [--store] [--force] [--db]  # 按标题关键词搜索相关主题
-search --authorid <authorid> [--store] [--force] [--db]        # 按用户 uid 搜索发表过的主题
+search --keyword <keyword> [--fid] [--store] [--force] [--db]    # 按标题关键词搜索相关主题
+search --username <username> [--fid] [--store] [--force] [--db]  # 按用户名搜索其发表过的主题
+search --authorid <authorid> [--fid] [--store] [--force] [--db]  # 按用户 uid 搜索发表过的主题
 ```
 
-* `--keyword` 与 `--authorid` 不能同时使用。
-* `--fid` 仅在关键词搜索时有效，缺省时为全站搜索。
+* `--keyword`、`--username` 与 `--authorid` 只能指定且必须指定其中之一。
+* `--username` 与 `--authorid` 是同一件事的两种入口：前者只需用户名，后者只需 uid，搜索结果相同。
+* `--fid` 在三种搜索方式下均有效，只能取单个板块序号，缺省时为全站搜索。
+* `--store`：指定是否将命中主题逐条抓取后存入数据库；不指定时只做查询。
+* `--force`：仅配合 `--store` 使用，语义与 `fetch` 的 `--force` 相同。
+* 输出内容随 `--store` 而不同：
+    * 未指定 `--store` 时，逐条输出命中主题的链接、标题、板块、发表者与最后回复时刻；
+    * 指定 `--store` 时，输出改为入库进度，不再重复输出上述命中详情。
 
 **monitor 命令**
 ```text
@@ -71,6 +78,9 @@ monitor board <fid>... [--file] [--store] [--force] [--criteria] [--func] [--gap
 ```
 
 * `--gap`：决定监控周期（秒），缺省值为 300
+* `--file`：从文件读取待监控对象
+    * `monitor topic` 中为每行一个链接
+    * `monitor board` 中为每行一个板块序号
 * `--store`：指定是否要在监控时对本地数据库进行更新
     * 主题监控中，决定基线取自数据库还是实时值，也决定是否对指定数据库进行写入
     * 板块监控中，仅决定基线取自数据库还是实时值，数据库是否写入要看 event 的实现
@@ -103,13 +113,20 @@ state [--db]  # 返回数据库当前状态
 
 **部分调用示例**
 ```
-python -m kf_analysis fetch topic "https://bbs.kfpromax.com/read.php?tid=00000&sf=fff"
-python -m kf_analysis get json "https://bbs.kfpromax.com/read.php?tid=00000&sf=fff"
-python -m kf_analysis search --keyword "偶像" --store --db kf.db
-python -m kf_analysis search --authorid 000000
-python -m kf_analysis transfer "user1, user2, user3" 0.5 --memo "thanks~"
-python -m kf_analysis monitor topic --file links.txt --criteria "user1, user2, user3"
-python -m kf_analysis monitor board --file fids.txt --criteria "user1, user2, user3" --db kf.db
+python -m kf_analysis fetch all
+python -m kf_analysis fetch board 5
+python -m kf_analysis fetch topic "https://bbs.kfpromax.com/read.php?tid=1082016&sf=4c9"
+python -m kf_analysis get json "https://bbs.kfpromax.com/read.php?tid=1082016&sf=4c9"
+python -m kf_analysis get usernames "https://bbs.kfpromax.com/read.php?tid=1082016&sf=4c9" --dedup
+python -m kf_analysis get homepage "https://bbs.kfpromax.com/profile.php?action=show&uid=908309&sf=cd4"
+python -m kf_analysis monitor topic "https://bbs.kfpromax.com/read.php?tid=1082016&sf=4c9" --store --criteria "kisaragizen, karamia"
+python -m kf_analysis monitor board 5 --func A --store --criteria "kisaragizen, karamia"
+python -m kf_analysis search --keyword "偶像大师" --fid 56 --store
+python -m kf_analysis search --username "kisaragizen" --fid 5 --store
+python -m kf_analysis search --authorid 908309 --fid 5 --store
+python -m kf_analysis buy "https://bbs.kfpromax.com/read.php?tid=1062680&sf=e88" --buy
+python -m kf_analysis transfer "kisaragizen, karamia" 0.5 --memo "congratulations~"
+python -m kf_analysis state
 ```
 
 
@@ -143,7 +160,8 @@ kf.fetch_all(force=False)                             # ↔ fetch all
 kf.fetch_board(fid, force=False)                      # ↔ fetch board
 kf.fetch_onetopic(tid, sf, force=False)               # ↔ fetch topic
 kf.get_search_results(keyword, store=False)           # ↔ search --keyword
-kf.get_search_results(authorid=uid, store=False)      # ↔ search --authorid
+kf.get_search_results(pwuser, store=False)            # ↔ search --username
+kf.get_search_results(authorid, store=False)          # ↔ search --authorid
 kf.get_index_url()                                    # 获取首页动态
 data = kf.get_topic_json(tid, sf)                     # ↔ get json
 names = kf.get_topic_usernames(tid, sf, dedup=False)  # ↔ get usernames
@@ -154,8 +172,8 @@ stats = kf.storage.stats()                            # ↔ state
 * `fetch_all` 是多次 `fetch_board` 的调用；
 * `fetch_board` 是多次 `fetch_onetopic` 的调用。
 * `get_search_results` 相关说明：
-    * `keyword` 与 `authorid` 只能指定且必须指定其中之一，`fid` 仅在关键词搜索时有效；
-    * `keyword` 需为 **GBK 百分号编码**形式，需要调用方前置处理（CLI 调用时无需在意）。
+    * `keyword`、`pwuser` 与 `authorid` 只能指定且必须指定其中之一；
+    * 搜索内容需为 **GBK 百分号编码**形式，需要调用方前置处理（CLI 调用时无需在意）。
 * `get_index_url` 相关说明：
     * 返回值形如 `{"active": [...], "new": [...]}`；
     * `active` 为首页正中的“最近动态主题”，`new` 为首页左下的“最新发表主题”。
@@ -172,7 +190,7 @@ stats = kf.storage.stats()                            # ↔ state
     * 该函数没有增量更新功能，使用时需要前置检测。
 
 **Actions 封装类（`actions`）**  
-发主题/发回复/发私信/帖子编辑/获取原始内容/买贴/转账/主页链接探测。
+发主题/发回复/发私信/帖子编辑/获取原始内容/买贴/转账。
 ```python
 from kf_analysis import actions
 
@@ -184,12 +202,13 @@ acts.get_post_content(tid, sf, pid, article)                     # 原始内容�
 actions.buy_topic(client, topic_id, topic_sf, mode)              # 主题购买
 actions.transfer_money(client, username, amount, memo)           # 贡献转账
 actions.send_message(client, username, title, content, save)     # 私信发送
-actions.search_user_hp(client, username)                         # 主页链接探测
 ```
 
-* 详细说明见 `actions.py` 对应位置的注释。
 * 目前 `post_topic` 函数只支持**没有强制二级分类的普通板块**。
-* **以下功能未列出**：`upload_image`, `search_user_sf`, `search_topic_sf`。
+* 以下功能不提供调用说明，仅秉持诚实原则在此处提及：
+    * `upload_image`：用于在自动化发帖时插入图像；
+    * `search_user_sf`, `search_topic_sf`, `search_user_hp`：用于在必要时抽样核对注册时间估算的准确性；
+    * 这些功能涉及对论坛接口的非常规使用，请勿滥用。
 
 **持续监控（`monitor`）**  
 ```python
@@ -197,15 +216,16 @@ from kf_analysis import monitor
 
 monitor.monitor_topic(config, links, gap, store, force, db_path, event, action, criteria)        # 持续监控主题
 monitor.monitor_board(config, fids, gap, pages, store, force, db_path, event, action, criteria)  # 持续监控板块
+monitor.monitor_bubble(text, duration, border)  # 气泡通知函数（供事件函数与执行函数调用）
 
 # 默认事件函数（event）
-monitor.topic_event_default(...)        # 主题级默认事件函数
-monitor.board_event_expand_first(...)   # 板块级①：先展开后判定
-monitor.board_event_judge_first(...)    # 板块级②：先判定后展开
+monitor.topic_event_default(...)       # 主题级默认事件函数
+monitor.board_event_expand_first(...)  # 板块级①：先展开后判定
+monitor.board_event_judge_first(...)   # 板块级②：先判定后展开
 
 # 默认执行函数（action）
-monitor.topic_action_default(...)       # 主题级：气泡提示命中信息
-monitor.board_action_default(...)       # 板块级：气泡提示命中信息
+monitor.topic_action_default(...)      # 主题级：气泡提示命中信息
+monitor.board_action_default(...)      # 板块级：气泡提示命中信息
 ```
 
 * 详细说明见 `monitor.py` 对应位置的注释。
@@ -330,6 +350,12 @@ hp.db                     # 主页信息数据库·自动生成
 
 
 ## 更新日志
+* 2026.09.30 v2.5.1
+    * 支持按用户名搜索主题
+    * 修复统计主题讨论天数时使用了 UTC+0 而非 UTC+8 的问题
+    * 修复无法区分搜索余额耗尽与搜索结果为空的问题
+    * 修复按 uid 搜索时无法限定板块的问题
+    * 修复搜索命令不入库时没有输出的问题
 * 2026.09.29 v2.5.0
     * 支持按标题关键词搜索主题并根据板块过滤
     * 支持按用户 uid 搜索发表过的主题
@@ -355,7 +381,7 @@ hp.db                     # 主页信息数据库·自动生成
 * 2026.09.07 v2.2.1
     * 论坛动作支持：私信
     * 支持已知用户名时直接获取用户主页链接
-    * 支持未知用户名时暴力搜索用户主页安全码
+    * 支持在必要时抽样核对注册时间估算的准确性
 * 2026.09.01 v2.2.0
     * 实现建模估算任意 UID 注册时间
 * 2026.08.26 v2.1.2

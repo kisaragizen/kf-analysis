@@ -340,6 +340,8 @@ def parse_search_page(soup):
     # 搜索结果页无法直接解析主题所属板块的 fid，上级调用可以根据 coordinator 提供的对照表进行转换
     # 需要注意 last_reply_time 不是主题发表时间而是主题最后被回复的时间
     if soup.find("a", href=re.compile(r"javascript:history\.go\(-1\)")):
+        if "今日搜索次数耗尽" in soup.get_text():
+            return None
         return False
     result = []
     trs = soup.select("table.thread1 tr")

@@ -365,6 +365,7 @@ class KFanalysis:
     def get_search_results(
         self,
         keyword=None,
+        pwuser=None,
         authorid=None,
         fid="all",
         store=False,
@@ -372,17 +373,18 @@ class KFanalysis:
     ):
         # 搜索结果信息获取的请求层，负责构造搜索请求与翻页
         # 对于主题板块的归属，解析层只返回板块名，本函数负责将板块名映射为 fid
-        # keyword 为标题关键字，authorid 为用户 uid，两者必选其一且不可同时指定
-        # fid 可以在标题关键字搜索时限定板块，并非本项目进行了什么后置过滤，而是论坛自带但被隐藏的功能
+        # keyword 为标题关键字，pwuser 为用户名，authorid 为用户 uid，三者必选其一且不可同时指定
+        # fid 可以在上述任一搜索方式下限定板块，并非本项目进行了什么后置过滤，而是论坛自带但被隐藏的功能
+        # 实测论坛不支持同时指定多个 fid，如果存在类似需求，只能分别请求再由调用方拼合
         # 论坛支持使用 sid 来保持搜索会话，不过经过实测，保持相同 sid 时与保持相同 url 参数时的搜索行为一致
         # 搜索结果相同，都具备翻页稳定性，并且都在翻页时消耗搜索次数余额，所以本函数选择不依赖 sid
-        # store 为 True 时将各条结果的主题逐条抓取后写入实例自身的库，为 False 时完全不写库
-        # 入库方式与 fetch 系列完全一致，force 的含义也相同：True=全量更新，False=增量更新
-        if not (keyword or authorid) or (keyword and authorid):
-            print("关键词与用户 uid 只能指定且必须指定其中之一\n")
+        if len([v for v in (keyword, pwuser, authorid) if v]) != 1:
+            print("关键词、用户名与用户 uid 只能指定且必须指定其中之一\n")
             return False
-        if authorid:
-            argues = f"authorid={authorid}"
+        if pwuser:
+            argues = f"step=2&pwuser={pwuser}&seekfid={fid}"
+        elif authorid:
+            argues = f"authorid={authorid}&seekfid={fid}"
         else:
             argues = f"step=2&keyword={keyword}&seekfid={fid}"
 
@@ -397,18 +399,19 @@ class KFanalysis:
                         f"{argues} | PAGE {page}",
                     )
                 )
-                return None
-            result = BeautifulSoup(response.content, "lxml")
-            result = analyser.parse_search_page(result)
+                print("搜索请求失败")
+                return False
+            soup = BeautifulSoup(response.content, "lxml")
+            result = analyser.parse_search_page(soup)
+            if result is False:
+                print("搜索结果为空")
+            elif result is None:
+                print("搜索余额耗尽")
             return result
 
         result = []
         page_data = get_onepage_url(argues, 1)
-        if page_data is False:
-            print("搜索结果为空")
-            return False
-        elif page_data is None:
-            print("搜索请求失败")
+        if not page_data:
             return False
         last_page, total, remain = page_data["status"]
         result += page_data["results"]

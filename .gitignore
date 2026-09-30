@@ -1,0 +1,19 @@
+# 本项目采用白名单式忽略规则
+# 新增文件时必须在此处补一条豁免
+*
+!.gitignore
+!README.md
+!activity_analysis.ipynb
+!pyproject.toml
+!kf_analysis/
+kf_analysis/*
+!kf_analysis/__init__.py
+!kf_analysis/__main__.py
+!kf_analysis/actions.py
+!kf_analysis/analyser.py
+!kf_analysis/analytics.py
+!kf_analysis/configure.json
+!kf_analysis/coordinator.py
+!kf_analysis/monitor.py
+!kf_analysis/service.py
+!kf_analysis/utils.py

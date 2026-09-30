@@ -7,16 +7,15 @@ fetch all [--force] [--db 路径]
     可选参数 [--db]：决定存储到哪个数据库文件中，缺省时为默认数据库
 fetch board <fid> [--force] [--db 路径]
     获取并解析某板块的所有帖子数据，存入数据库，以 <fid> 指定板块
-    可选参数 [--force]：决定是全量更新还是增量更新，缺省时为增量更新
-    可选参数 [--db]：决定存储到哪个数据库文件中，缺省时为默认数据库
 fetch topic <link>... [--force] [--file 链接文件] [--db 路径]
     获取并解析某帖子数据，存入数据库
     命令行参数传递链接时：<link> 间以空格分隔，每个 <link> 都以引号包裹
     文件形式传递链接时：每行一个链接，不需要带引号
-search [--keyword | --authorid] [--fid] [--store] [--force] [--db 路径]
-    按标题关键词或用户 uid 搜索主题，可选是否同步入库
-    要注意 keyword 与 authorid只能指定且必须指定其中之一
-    可选参数 [--fid]：仅在关键词搜索时有效，缺省时为全站搜索
+search [--keyword | --username | --authorid] [--fid] [--store] [--force] [--db 路径]
+    按标题关键词、用户名或用户 uid 搜索主题，可选是否同步入库
+    要注意 keyword、username 与 authorid 只能指定且必须指定其中之一
+    可选参数 [--fid]：只能取单个板块序号，缺省时为全站搜索
+    可选参数 [--store]：决定是否同步入库所有搜索结果，其缺省时为仅查询
 get json <link>
     获取并解析某帖子数据，不操作数据库，仅支持单个链接
     解析完成后会将数据存储到同目录文本文件中（JSON）
@@ -50,9 +49,7 @@ monitor board <fid>... [--file] [--store] [--force] [--criteria] [--func] [--gap
                        B 为判定优先（先判定后展开，只有命中主题入库）
     可选参数 [--criteria]：判定依据字符串，格式与意义取决于 event 的实现
                            在两种默认 event 中，该参数用于传递以半角逗号分隔的用户名列表
-    可选参数 [--pages]：决定每轮的扫描页数，缺省值为 2
-monitor index
-    持续监控指定用户主页（尚未实现）"""
+    可选参数 [--pages]：决定每轮的扫描页数，缺省值为 2"""
 
 import argparse
 import json
@@ -106,6 +103,7 @@ def build_parser():
     search = sub.add_parser("search")
     search_target = search.add_mutually_exclusive_group(required=True)
     search_target.add_argument("--keyword")
+    search_target.add_argument("--username")
     search_target.add_argument("--authorid")
     search.add_argument("--fid", default="all")
     search.add_argument("--store", action="store_true")
@@ -123,7 +121,7 @@ def build_parser():
     state.add_argument("--db", default="kf.db")
 
     monitor = sub.add_parser("monitor")
-    monitor.add_argument("target", choices=["topic", "board", "index"])
+    monitor.add_argument("target", choices=["topic", "board"])
     monitor.add_argument("value", nargs="*")
     monitor.add_argument("--file")
     monitor.add_argument("--store", action="store_true")
@@ -204,9 +202,6 @@ def main():
                 event=event,
             )
             return
-        elif args.target == "index":
-            pass
-        return
 
     if args.command in ("buy", "transfer"):
         actions = Actions(utils.load_config())
@@ -277,13 +272,28 @@ def main():
             if args.keyword
             else None
         )
-        kf.get_search_results(
+        pwuser = (
+            gbk_form({"pwuser": args.username}).decode().split("=", 1)[1]
+            if args.username
+            else None
+        )
+        result = kf.get_search_results(
             keyword=keyword,
+            pwuser=pwuser,
             authorid=args.authorid,
             fid=args.fid,
             store=args.store,
             force=args.force,
         )
+        if result is False or args.store:
+            return
+        print()
+        for row in result:
+            print(utils.topic_url(row["topic_id"], row["topic_sf"]))
+            print(f"    -{row['topic_title']}")
+            print(f"    -{row['board_name']}")
+            print(f"    -{row['topic_poster']}")
+            print(f"    -{row['last_reply_time']}")
         return
 
     if args.command == "get":
@@ -320,6 +330,7 @@ def main():
             print("数据已写入同目录文本文件")
         else:
             print("数据获取失败B")
+        return
 
     if args.command == "state":
         stats = KFanalysis(utils.load_config(), db_path=args.db).storage.stats()
