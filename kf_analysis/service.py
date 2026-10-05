@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import sqlite3
 import time
 import requests
@@ -78,18 +79,25 @@ class Storage:
     def get_topic_floor_count(self, topic_id):
         # 要注意管理行为可能导致楼层号不连续现象
         # 本项目没有为回复级空洞插入最小化条目的功能
-        # 本函数返回：楼层数量
+        # 本函数返回目标主题的楼层存储数量，不存在时返回 0
         row = self.conn.execute(
             "SELECT COUNT(*) FROM reply WHERE topic_id=?", (topic_id,)
         ).fetchone()
         return row[0]
 
     def get_topic_max_floor(self, topic_id):
-        # 本函数返回：最大楼层号
+        # 本函数返回目标主题的楼层号最大值，不存在时返回 -1
         row = self.conn.execute(
             "SELECT MAX(floor) FROM reply WHERE topic_id=?", (topic_id,)
         ).fetchone()
         return row[0] if row[0] is not None else -1
+
+    def get_topic_record_time(self, topic_id):
+        # 本函数返回目标主题的入库时间，不存在时返回 math.inf
+        row = self.conn.execute(
+            "SELECT record_time FROM topic WHERE topic_id=?", (topic_id,)
+        ).fetchone()
+        return row[0] if row is not None else math.inf
 
     def get_topic_usernames(self, topic_id):
         rows = self.conn.execute(

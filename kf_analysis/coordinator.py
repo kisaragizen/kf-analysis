@@ -1,12 +1,40 @@
+import json
 import logging
 import re
 import sqlite3
 import time
+from pathlib import Path
 from bs4 import BeautifulSoup
 from . import analyser, utils
 from .service import Client, Storage
 
 logger = logging.getLogger("kf-analysis")
+# 记录了各板块上次完成完整扫描时间的日志文件（早停功能依赖）
+SWEEP_LOG = Path(__file__).with_name("sweep_log.json")
+SWEEP_LOG_TEMP = SWEEP_LOG.with_name(SWEEP_LOG.name + ".tmp")
+
+
+def load_sweep_log():
+    if not SWEEP_LOG.exists():
+        return {}
+    with open(SWEEP_LOG, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def get_sweep_time(fid):
+    entry = load_sweep_log().get("boards", {}).get(str(fid))
+    return entry["last_time"] if entry else -1
+
+
+def record_sweep(fid, name, timestamp):
+    data = load_sweep_log()
+    data.setdefault("version", 1)
+    boards = data.setdefault("boards", {})
+    boards[str(fid)] = {"name": name, "last_time": timestamp}
+    with open(SWEEP_LOG_TEMP, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    SWEEP_LOG_TEMP.replace(SWEEP_LOG)
+
 
 # 板块名有两种：①板块索引栏显示名称；②板块真实名称
 # 前者在 configure.json 中有定义（boardlist），后者定义如下
@@ -54,10 +82,18 @@ class KFanalysis:
         order="lastpost",
         pages=10,
         recheck=True,
+        early_stop=False,
     ):
         # detail=False 时的返回值：(topic_id, topic_sf, reply_num)
         # detail=True 时的返回值：{topic_id, topic_sf, topic_poster, topic_labels, topic_title, reply_num, view_count}
         # pages 为抓取页数，order=lastpost 为最后回复序，order=postdate 为主题发表序
+        # 早停功能指的是，当遇到某页满足“①页中所有主题均无增量；②页中所有主题入库时间均不大于 last_time（该板块上次全量成功时间）”时
+        # 为什么要加入判定条件②呢？为了防止“用户在本次全量前手动 fetch 过大量主题，且这些主题刚好没有任何后续增量且挤满一页”的极端情况
+        # self.recordable 表示本次扫描能否作为板块扫描时间日志的依据，任何一页抓取失败都会将其置假
+        result = []
+        self.recordable = True
+        last_sweep = get_sweep_time(fid) if early_stop else -1
+
         def get_onepage_url(page):
             url = (
                 "https://bbs.kfpromax.com/thread.php?"
@@ -84,15 +120,27 @@ class KFanalysis:
                 )
                 return []
 
-        result = []
         if disp:
             print("\n=======================================================\n")
-        for page in range(1, pages + 1):
-            if page > 10:
-                break
-            if disp:
-                print(f"板块 {fid} 第 {page} 页访问成功")
-            result += get_onepage_url(page)
+        for page in range(1, max(10, pages + 1)):
+            rows = get_onepage_url(page)
+            if not rows:
+                if disp:
+                    print(f"板块 {fid} 第 {page} 页访问失败")
+                self.recordable = False
+            else:
+                if disp:
+                    print(f"板块 {fid} 第 {page} 页访问成功")
+                if early_stop:
+                    if all(
+                        self.storage.should_skip(r[0], r[2])
+                        and self.storage.get_topic_record_time(r[0]) <= last_sweep
+                        for r in (x.values() if detail else x for x in rows)
+                    ):
+                        if disp:
+                            print(f"板块 {fid} 第 {page} 页触发早停")
+                        break
+                result += rows
             time.sleep(self.config.timegap_board_in)
         # 为了避免翻页期间有帖子浮动至首页导致提取不完全，可以「再次获取首页→插入最前→去重」
         # 这一行为建立在「pages × timegap_board_in 秒内浮动主题数不超过单页容量」的假设上
@@ -259,8 +307,8 @@ class KFanalysis:
         time.sleep(self.config.timegap_topic_out)
         return data
 
-    def fetch_board(self, fid, force=False, disp=True):
-        board_urls = self.get_oneboard_url(fid, disp=disp)
+    def fetch_board(self, fid, force=False, disp=True, early_stop=False):
+        board_urls = self.get_oneboard_url(fid, disp=disp, early_stop=early_stop)
         for index, (topic_id, topic_sf, listing_count) in enumerate(board_urls):
             self.fetch_onetopic(
                 topic_id,
@@ -271,10 +319,13 @@ class KFanalysis:
                 index=index,
                 total=len(board_urls),
             )
+        if self.recordable:
+            name = dict((f, n) for n, f in self.config.boardlist).get(fid, "")
+            record_sweep(fid, name, int(time.time()))
 
-    def fetch_all(self, force=False, disp=True):
+    def fetch_all(self, force=False, disp=True, early_stop=False):
         for _, fid in self.config.boardlist:
-            self.fetch_board(fid, force=force, disp=disp)
+            self.fetch_board(fid, force=force, disp=disp, early_stop=early_stop)
             time.sleep(self.config.timegap_board_out)
 
     def get_topic_usernames(self, topic_id, topic_sf, dedup=False):

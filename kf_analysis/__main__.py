@@ -1,11 +1,12 @@
 """本文件用于将各种功能封装为 CLI 调用
 以下所有命令在实际运行时都需要前缀 python -m kf_analysis
 ======================================================================
-fetch all [--force] [--db 路径]
+fetch all [--force] [--db 路径] [--early-stop]
     获取并解析所有板块的所有帖子数据，存入数据库
     可选参数 [--force]：决定是全量更新还是增量更新，缺省时为增量更新
     可选参数 [--db]：决定存储到哪个数据库文件中，缺省时为默认数据库
-fetch board <fid> [--force] [--db 路径]
+    可选参数 [--early-stop]：获取板块链接时不再固定扫描 10 页，而是弹性扫描
+fetch board <fid> [--force] [--db 路径] [--early-stop]
     获取并解析某板块的所有帖子数据，存入数据库，以 <fid> 指定板块
 fetch topic <link>... [--force] [--file 链接文件] [--db 路径]
     获取并解析某帖子数据，存入数据库
@@ -49,13 +50,17 @@ monitor board <fid>... [--file] [--store] [--force] [--criteria] [--func] [--gap
                        B 为判定优先（先判定后展开，只有命中主题入库）
     可选参数 [--criteria]：判定依据字符串，格式与意义取决于 event 的实现
                            在两种默认 event 中，该参数用于传递以半角逗号分隔的用户名列表
-    可选参数 [--pages]：决定每轮的扫描页数，缺省值为 2"""
+    可选参数 [--pages]：决定每轮的扫描页数，缺省值为 2
+可选参数 [--identity]：所有能够产生网络请求的命令都支持该参数
+                       用于选择不同身份进行访问，缺省时使用第一个身份
+                       身份是 headers 与 proxies 的组合，需要提前在 configure.json 中定义"""
 
 import argparse
 import json
 import logging
 import re
 import time
+
 from . import utils
 from .actions import Actions, buy_topic, gbk_form, transfer_money
 from .coordinator import KFanalysis
@@ -93,12 +98,15 @@ def build_parser():
     fetch.add_argument("value", nargs="*")
     fetch.add_argument("--file")
     fetch.add_argument("--force", action="store_true")
+    fetch.add_argument("--early-stop", action="store_true")
+    fetch.add_argument("--identity")
     fetch.add_argument("--db", default="kf.db")
 
     get = sub.add_parser("get")
     get.add_argument("kind", choices=["json", "usernames", "homepage"])
     get.add_argument("link")
     get.add_argument("--dedup", action="store_true")
+    get.add_argument("--identity")
 
     search = sub.add_parser("search")
     search_target = search.add_mutually_exclusive_group(required=True)
@@ -108,15 +116,18 @@ def build_parser():
     search.add_argument("--fid", default="all")
     search.add_argument("--store", action="store_true")
     search.add_argument("--force", action="store_true")
+    search.add_argument("--identity")
     search.add_argument("--db", default="kf.db")
 
     buy = sub.add_parser("buy")
     buy.add_argument("link")
     buy.add_argument("--buy", action="store_true")
+    buy.add_argument("--identity")
     transfer = sub.add_parser("transfer")
     transfer.add_argument("username")
     transfer.add_argument("amount")
     transfer.add_argument("--memo", default="")
+    transfer.add_argument("--identity")
     state = sub.add_parser("state")
     state.add_argument("--db", default="kf.db")
 
@@ -130,6 +141,7 @@ def build_parser():
     monitor.add_argument("--gap", type=int, default=300)
     monitor.add_argument("--pages", type=int, default=2)
     monitor.add_argument("--func", choices=["A", "B"], default="A")
+    monitor.add_argument("--identity")
     monitor.add_argument("--db", default="kf.db")
 
     return parser
@@ -154,7 +166,7 @@ def main():
                 return
             parsed = [parse_link(link) for link in links]
             monitor_topic(
-                utils.load_config(),
+                utils.load_config(args.identity),
                 parsed,
                 gap=args.gap,
                 store=args.store,
@@ -177,7 +189,7 @@ def main():
             except ValueError:
                 print("板块序号应为数字")
                 return
-            config = utils.load_config()
+            config = utils.load_config(args.identity)
             unknown = set(fids) - set([bf for bn, bf in config.boardlist])
             if not fids:
                 print("待处理板块列表为空")
@@ -204,7 +216,7 @@ def main():
             return
 
     if args.command in ("buy", "transfer"):
-        actions = Actions(utils.load_config())
+        actions = Actions(utils.load_config(args.identity))
     if args.command == "buy":
         tid, sf = parse_link(args.link)
         price = buy_topic(actions.client, tid, sf, "buy" if args.buy else "check")
@@ -226,9 +238,9 @@ def main():
             print(transfer_money(actions.client, name, args.amount, memo=args.memo))
 
     if args.command == "fetch":
-        kf = KFanalysis(utils.load_config(), db_path=args.db)
+        kf = KFanalysis(utils.load_config(args.identity), db_path=args.db)
         if args.target == "all":
-            kf.fetch_all(force=args.force)
+            kf.fetch_all(force=args.force, early_stop=args.early_stop)
         elif args.target == "board":
             if not args.value:
                 print("需要指定板块序号")
@@ -242,7 +254,7 @@ def main():
                 print("如果你确定该板块序号存在，", end="")
                 print("请先在 configure.json 中填写它")
                 return
-            kf.fetch_board(fid, force=args.force)
+            kf.fetch_board(fid, force=args.force, early_stop=args.early_stop)
         elif args.target == "topic":
             if args.file:
                 try:
@@ -266,7 +278,7 @@ def main():
                 )
 
     if args.command == "search":
-        kf = KFanalysis(utils.load_config(), db_path=args.db)
+        kf = KFanalysis(utils.load_config(args.identity), db_path=args.db)
         keyword = (
             gbk_form({"keyword": args.keyword}).decode().split("=", 1)[1]
             if args.keyword
@@ -297,7 +309,7 @@ def main():
         return
 
     if args.command == "get":
-        kf = KFanalysis(utils.load_config())
+        kf = KFanalysis(utils.load_config(args.identity))
         if args.kind == "homepage":
             uid = re.findall(r"uid=(\d+)", args.link)
             sf = re.findall(r"sf=([^&]+)", args.link)

@@ -1,22 +1,53 @@
 # kf-analysis
 
-绯月论坛活跃度数据获取与分析项目（v2.5.1）。  
+绯月论坛活跃度数据获取与分析项目（v2.5.2）。  
 v2.0.0 架构重构完成；v2.1.0 支持了部分论坛动作（发帖/编辑/私信/买贴/转账）；  
 v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0-v2.4.0 新增了持续监控功能；  
 截止 v2.5.0，重构完成时构想的所有功能均已实现，今后将以优化与修正为主。  
 绝大部分功能同时支持 CLI 与包内函数两种调用形式（小部分风险论坛动作只支持包内函数调用）。  
 支持板块级与主题级增量抓取；实现“数据获取→数据分析→发帖”全流程自动化接口。  
-经 937,219 条回复数据实测，数据抓取与入库结果符合预期（2026-10-01 时数据）。
+经 938,724 条回复数据实测，数据抓取与入库结果符合预期（2026-10-05 时数据）。
 
 * 本项目运行在 bbs.kfpromax.com 域名下。  
 * 本项目的文件内注释比 README.md 更详细。
 
 
 ## 配置填写
-编辑 `kf_analysis/configure.json`，填写 `User-Agent`、`Cookie` 与 `Proxy` 信息。  
- `User-Agent` 与 `Cookie` 必须保持匹配，否则可能导致请求失败。`Proxy` 留空则使用直连。  
-**除非你知道自己在做什么，否则不要改动四个 `timegap` 属性的默认值。**  
-`boardlist` 用于指定 `fetch all` 命令需要获取的板块。
+编辑 `kf_analysis/configure.json` 填写身份信息。
+
+* 关于身份信息：
+    * 身份名可自定义，值为 `headers` 与 `proxies` 的组合。
+    * `headers` 中的 `User-Agent` 与 `Cookie` 必须保持匹配。
+    * `headers` 必须同时包含 `Host`、`User-Agent`、`Cookie` 三个非空字段。
+    * `proxies` 留空时直连，想走代理时必须同时配置 `http` 与 `https` 两个非空字段。
+    * `--identity` 参数缺省时将使用第一个身份进行访问，也可以通过身份名指定其他身份。
+* 关于其他配置：
+    * 除非你知道自己在做什么，否则不要改动四个 `timegap` 属性的默认值。
+    * `boardlist` 默认包含子板块外的所有板块，可根据实际需要自行增减。
+
+```json
+"identities": {
+    "username": {
+        "headers": {
+            "Host": "bbs.kfpromax.com",
+            "User-Agent": "……",
+            "Cookie": "……"
+        },
+        "proxies": {
+            "http": "......",
+            "https": "......"
+        }
+    },
+    "username-no-proxies": {
+        "headers": {
+            "Host": "bbs.kfpromax.com",
+            "User-Agent": "……",
+            "Cookie": "……"
+        },
+        "proxies": {}
+    }
+}
+```
 
 
 ## CLI 调用
@@ -34,12 +65,14 @@ CLI 命令主要分为四类：
 
 **fetch 类命令**
 ```text
-fetch all [--force] [--db]                       # 获取所有板块的数据
-fetch board <fid> [--force] [--db]               # 获取指定板块的数据
-fetch topic <link>... [--force] [--file] [--db]  # 获取指定主题的数据
+fetch all [--force] [--early-stop] [--identity] [--db]         # 获取所有板块的数据
+fetch board <fid> [--force] [--early-stop] [--identity] [--db] # 获取指定板块的数据
+fetch topic <link>... [--force] [--file] [--identity] [--db]   # 获取指定主题的数据
 ```
 
-* `--force`：强制全量更新；不指定该参数时仅为增量更新。  
+* `--force`：强制全量更新；不指定该参数时为增量更新。  
+* `--early-stop`：获取板块链接时不再固定扫描 10 页，而是弹性扫描。  
+* `--identity`：指定本次请求使用的身份，缺省时将使用 `identities` 中的第一个身份。  
 * `--db`：指定数据将写入哪个数据库，不指定该参数时使用默认数据库。  
 * `fetch topic` 支持两种方式传递一个或多个链接：  
     * 以命令行参数指定时，多个链接间需以空格分隔并各自使用引号包裹。  
@@ -47,9 +80,9 @@ fetch topic <link>... [--force] [--file] [--db]  # 获取指定主题的数据
 
 **get 类命令**
 ```text
-get json <link>                 # 获取指定主题的数据
-get usernames <link> [--dedup]  # 输出参与指定主题的用户名列表
-get homepage <link>             # 输出指定用户的主页信息
+get json <link> [--identity]                 # 获取指定主题的数据
+get usernames <link> [--dedup] [--identity]  # 输出参与指定主题的用户名列表
+get homepage <link> [--identity]             # 输出指定用户的主页信息
 ```
 
 * `get json` 命令会将获取到的数据写入同目录的文本文件。  
@@ -57,9 +90,9 @@ get homepage <link>             # 输出指定用户的主页信息
 
 **search 命令**
 ```text
-search --keyword <keyword> [--fid] [--store] [--force] [--db]    # 按标题关键词搜索相关主题
-search --username <username> [--fid] [--store] [--force] [--db]  # 按用户名搜索其发表过的主题
-search --authorid <authorid> [--fid] [--store] [--force] [--db]  # 按用户 uid 搜索发表过的主题
+search --keyword <keyword> [--fid] [--store] [--force] [--identity] [--db]    # 按标题关键词搜索相关主题
+search --username <username> [--fid] [--store] [--force] [--identity] [--db]  # 按用户名搜索其发表过的主题
+search --authorid <authorid> [--fid] [--store] [--force] [--identity] [--db]  # 按用户 uid 搜索发表过的主题
 ```
 
 * `--keyword`、`--username` 与 `--authorid` 只能指定且必须指定其中之一。
@@ -73,8 +106,8 @@ search --authorid <authorid> [--fid] [--store] [--force] [--db]  # 按用户 uid
 
 **monitor 命令**
 ```text
-monitor topic <link>... [--file] [--store] [--force] [--criteria] [--gap] [--db]
-monitor board <fid>... [--file] [--store] [--force] [--criteria] [--func] [--gap] [--pages] [--db]
+monitor topic <link>... [--file] [--store] [--force] [--criteria] [--gap] [--identity] [--db]
+monitor board <fid>... [--file] [--store] [--force] [--criteria] [--func] [--gap] [--pages] [--identity] [--db]
 ```
 
 * `--gap`：决定监控周期（秒），缺省值为 300
@@ -99,8 +132,8 @@ monitor board <fid>... [--file] [--store] [--force] [--criteria] [--func] [--gap
 
 **buy / transfer 命令**
 ```text
-buy <link> [--buy]                          # 主题购买功能
-transfer <username_list> <amount> [--memo]  # 贡献转账功能
+buy <link> [--buy] [--identity]                          # 主题购买功能
+transfer <username_list> <amount> [--memo] [--identity]  # 贡献转账功能
 ```
 
 * `--buy`：仅当指定该参数时执行购买，否则执行价格查询。  
@@ -113,8 +146,8 @@ state [--db]  # 返回数据库当前状态
 
 **部分调用示例**
 ```
-python -m kf_analysis fetch all
-python -m kf_analysis fetch board 5
+python -m kf_analysis fetch all --early-stop
+python -m kf_analysis fetch board 5 --early-stop
 python -m kf_analysis fetch topic "https://bbs.kfpromax.com/read.php?tid=1082016&sf=4c9"
 python -m kf_analysis get json "https://bbs.kfpromax.com/read.php?tid=1082016&sf=4c9"
 python -m kf_analysis get usernames "https://bbs.kfpromax.com/read.php?tid=1082016&sf=4c9" --dedup
@@ -128,6 +161,8 @@ python -m kf_analysis buy "https://bbs.kfpromax.com/read.php?tid=1062680&sf=e88"
 python -m kf_analysis transfer "kisaragizen, karamia" 0.5 --memo "congratulations~"
 python -m kf_analysis state
 ```
+
+* 均为作者最常用的参数组合。
 
 
 ## 包内函数调用
@@ -154,10 +189,11 @@ analyser.parse_search_page(soup)                                      # 解析�
 from kf_analysis import utils
 from kf_analysis.coordinator import KFanalysis
 
-cfg = utils.load_config()
+cfg = utils.load_config()           # 使用默认身份
+cfg = utils.load_config("karamia")  # 使用名为 karamia 的身份
 kf = KFanalysis(cfg, db_path="kf.db")
-kf.fetch_all(force=False)                             # ↔ fetch all
-kf.fetch_board(fid, force=False)                      # ↔ fetch board
+kf.fetch_all(force=False, early_stop=False)           # ↔ fetch all
+kf.fetch_board(fid, force=False, early_stop=False)    # ↔ fetch board
 kf.fetch_onetopic(tid, sf, force=False)               # ↔ fetch topic
 kf.get_search_results(keyword, store=False)           # ↔ search --keyword
 kf.get_search_results(pwuser, store=False)            # ↔ search --username
@@ -334,14 +370,15 @@ Jupyter-Lab: activity_analysis.ipynb
 ```
 kf_analysis/
 ├── __main__.py           # CLI 入口
-├── configure.json        # 配置文件
 ├── coordinator.py        # 行为编排
 ├── monitor.py            # 持续监控
 ├── service.py            # 网络请求与数据库操作
 ├── analyser.py           # 页面解析
 ├── actions.py            # 论坛动作
 ├── analytics.py          # 数据库查询与绘图
-└── utils.py              # 杂项工具
+├── utils.py              # 杂项工具
+├── configure.json        # 配置文件
+└── sweep_log.json        # 弹性扫描依赖·自动生成
 activity_analysis.ipynb   # 数据分析笔记本
 error.log                 # 错误日志·自动生成
 kf.db                     # 默认数据库·自动生成
@@ -350,7 +387,12 @@ hp.db                     # 主页信息数据库·自动生成
 
 
 ## 更新日志
-* 2026.09.30 v2.5.1
+* 2026.10.03 v2.5.2
+    * 支持身份切换
+    * 支持板块抓取弹性扫描
+    * 修复主题监控循环轮上报数字基准错误的问题
+    * 修复板块抓取可能谎报访问成功的问题
+* 2026.10.01 v2.5.1
     * 支持按用户名搜索主题
     * 修复统计主题讨论天数时使用了 UTC+0 而非 UTC+8 的问题
     * 修复无法区分搜索余额耗尽与搜索结果为空的问题

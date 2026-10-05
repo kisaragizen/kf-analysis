@@ -71,6 +71,7 @@ def monitor_topic(
         target[2] = 0
         if not ecrof:
             data["reply_list"] = [r for r in data["reply_list"] if r["floor"] > floor]
+            last[tid] = max((r["floor"] for r in data["reply_list"]), default=floor)
         return data
 
     while True:

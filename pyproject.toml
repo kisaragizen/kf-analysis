@@ -1,6 +1,6 @@
 [project]
 name = "kf-analysis"
-version = "2.5.1"
+version = "2.5.2"
 requires-python = ">=3.12"
 description = "绯月论坛活跃度数据获取与分析工具，提供论坛操作接口"
 dependencies = [

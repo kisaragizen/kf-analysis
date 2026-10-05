@@ -35,23 +35,43 @@ class Config:
     timegap_topic_in: int
 
 
-def load_config():
+def load_config(identity=None):
     path = Path(__file__).with_name("configure.json")
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-    except FileNotFoundError:
-        print("同目录下没有找到 configure.json")
+    except (FileNotFoundError, json.JSONDecodeError):
+        print("配置文件已损坏或缺失，请重新下载 configure.json")
         raise SystemExit(1)
-    headers = data.get("headers", {})
-    if not headers.get("User-Agent") or not headers.get("Cookie"):
-        print("请先在 configure.json 填入 User-Agent 与 Cookie")
+    identities = data.pop("identities", {})
+    if not identities:
+        print("需要定义至少一个身份，格式请参考 README.md")
         raise SystemExit(1)
-    proxies = data.setdefault("proxies", {})
-    if not proxies:
-        print("proxies 为空，将以直连方式访问")
-    elif {"http", "https"} > set(proxies):
-        print("proxies 格式不正确，需同时包含 http 与 https")
+    if identity is None:
+        identity = next(iter(identities))
+        print(f"正在使用默认身份：{identity}")
+    elif identity not in identities:
+        print(f"没有名为 {identity} 的身份，请检查拼写错误")
+        print(f"可用身份列表：{', '.join(identities)}")
+        raise SystemExit(1)
+    picked = identities[identity]
+    data["headers"] = picked.get("headers", {})
+    data["proxies"] = picked.get("proxies", {})
+    required_a = {"User-Agent", "Cookie", "Host"}
+    required_b = {"http", "https"}
+    if (required_a & data["headers"].keys()) != required_a:
+        print(f"headers 格式错误，需包含以下字段：{', '.join(required_a)}")
+        raise SystemExit(1)
+    if not data["proxies"]:
+        print("未配置代理，将直连访问")
+    elif (required_b & data["proxies"].keys()) != required_b:
+        print(f"proxies 格式错误，需包含以下字段：{', '.join(required_b)}")
+        raise SystemExit(1)
+    else:
+        print("代理已配置，经代理访问")
+    empty = [k for k, v in (data["headers"] | data["proxies"]).items() if not v]
+    if empty:
+        print(f"以下字段为空，请填写后再运行：{', '.join(empty)}")
         raise SystemExit(1)
     return Config(**data)
 
