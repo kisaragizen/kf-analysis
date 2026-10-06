@@ -17,7 +17,9 @@ class Client:
         self.session.headers.update(config.headers)
         self.session.proxies.update(config.proxies)
         retry = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-        self.session.mount("https://", HTTPAdapter(max_retries=retry))
+        adapter = HTTPAdapter(max_retries=retry)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def get(self, url):
         return self.session.get(url, timeout=15)

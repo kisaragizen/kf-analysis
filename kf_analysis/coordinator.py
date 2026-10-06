@@ -122,7 +122,7 @@ class KFanalysis:
 
         if disp:
             print("\n=======================================================\n")
-        for page in range(1, max(10, pages + 1)):
+        for page in range(1, min(11, pages + 1)):
             rows = get_onepage_url(page)
             if not rows:
                 if disp:
@@ -237,7 +237,7 @@ class KFanalysis:
                         f"帖子 ({topic_id}, {topic_sf}, {page})",
                     )
                 )
-                continue
+                return False
             page_sources.append((page, response.content))
             if disp:
                 echo()
