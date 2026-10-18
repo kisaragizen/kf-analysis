@@ -107,6 +107,12 @@ class Storage:
         ).fetchall()
         return [r[0] for r in rows]
 
+    def get_hidden_replies(self):
+        return self.conn.execute(
+            "SELECT topic_id, topic_sf, floor FROM reply WHERE status='hidden' "
+            "ORDER BY topic_id, floor"
+        ).fetchall()
+
     def insert_closed_topic(self, topic_id, topic_sf, status):
         # 为被锁定贴与被删除贴添加占位最小化条目
         self.conn.execute(
@@ -173,7 +179,7 @@ class Storage:
                     r["reply_time"],
                     r["reply_text"],
                     topic_info["record_time"],
-                    "active",
+                    r["status"],
                     json.dumps(r["image_list"], ensure_ascii=False),
                     r["complete"],
                     json.dumps(r["hidden_content"], ensure_ascii=False),
@@ -213,6 +219,32 @@ class Storage:
                     "service.insert_replies",
                     f"帖子 ({tid}) PID 重复现象 {dup}",
                 )
+            )
+
+    def update_replies(self, replies, record_time):
+        rows = [
+            (
+                r["reply_box_color"],
+                r["reply_text"],
+                r["status"],
+                json.dumps(r["image_list"], ensure_ascii=False),
+                r["complete"],
+                json.dumps(r["hidden_content"], ensure_ascii=False),
+                record_time,
+                r["topic_id"],
+                r["reply_id"],
+            )
+            for r in replies
+        ]
+        with self.conn:
+            self.conn.executemany(
+                "UPDATE reply SET reply_box_color=?, reply_text=?, status=?, image_list=?, "
+                "complete=?, hidden_content=?, record_time=? WHERE topic_id=? AND reply_id=?",
+                rows,
+            )
+            self.conn.executemany(
+                "UPDATE topic SET record_time=? WHERE topic_id=?",
+                [(record_time, tid) for tid in {r["topic_id"] for r in replies}],
             )
 
     def stats(self):

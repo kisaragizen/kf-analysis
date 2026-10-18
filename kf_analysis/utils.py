@@ -1,5 +1,6 @@
 import json
 import re
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,11 +18,21 @@ LOG_CODES = {
     "E108": "论坛首页获取失败",
     "E109": "搜索结果获取失败",
     "W101": "PID 重复现象提示",
+    "W102": "回复复核时目标不可访问",
 }
 
 
-def log_error(code, site, detail):
-    return f"[{code}] {site} | {detail}"
+def log_error(code, site, detail, error=None):
+    message = f"[{code}] {site} | {detail}"
+    if error is not None:
+        tb = []
+        for line in "".join(traceback.format_exception(error)).splitlines():
+            if line.startswith("    ") and tb and tb[-1].startswith("  File "):
+                continue
+            if line.strip():
+                tb.append(line.rstrip())
+        message += "\n" + "\n".join(tb)
+    return message
 
 
 @dataclass

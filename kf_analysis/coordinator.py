@@ -112,10 +112,10 @@ class KFanalysis:
                     BeautifulSoup(response.content, "lxml"),
                     detail=detail,
                 )
-            except Exception:
+            except Exception as e:
                 logger.error(
                     utils.log_error(
-                        "E102", "coordinator.get_oneboard_url", f"板块 ({fid})"
+                        "E102", "coordinator.get_oneboard_url", f"板块 ({fid})", e
                     )
                 )
                 return []
@@ -282,12 +282,13 @@ class KFanalysis:
                 return_header=return_header,
                 floor=floor,
             )
-        except Exception:
+        except Exception as e:
             logger.error(
                 utils.log_error(
                     "E106",
                     "coordinator.fetch_onetopic",
                     f"帖子 ({topic_id}, {topic_sf})",
+                    e,
                 )
             )
             return False
@@ -327,6 +328,40 @@ class KFanalysis:
         for _, fid in self.config.boardlist:
             self.fetch_board(fid, force=force, disp=disp, early_stop=early_stop)
             time.sleep(self.config.timegap_board_out)
+
+    def rescan_hidden_replies(self):
+        # 用户进度分不足 90 时回复会被隐藏，这并非永久状态
+        # 本函数用于重新获取并解析 status=hidden 的回复，覆盖写入
+        # 考虑到一页可能存在多个 hidden 回复，先对 hidden 回复所在页进行去重
+        pages = {}
+        for tid, sf, floor in self.storage.get_hidden_replies():
+            pages.setdefault((tid, sf, floor // 20 + 1), []).append(floor)
+        for index, ((tid, sf, page), floors) in enumerate(pages.items(), 1):
+            response = self.client.get(f"{utils.topic_url(tid, sf)}&page={page}")
+            parsed = {}
+            if response.status_code == 200:
+                parsed = {
+                    r["floor"]: r
+                    for r in analyser.parse_replies([response.content], tid, sf)
+                }
+            found = []
+            for floor in floors:
+                if floor in parsed:
+                    found.append(parsed[floor])
+                else:
+                    logger.warning(
+                        utils.log_error(
+                            "W102",
+                            "coordinator.rescan_hidden_replies",
+                            f"帖子 ({tid}, {sf}, {page}, {floor})",
+                        )
+                    )
+            self.storage.update_replies(found, int(time.time()))
+            print(
+                f"{index}/{len(pages)} ({tid}, {sf}, {page}): "
+                f"{len(found)} = {len(floors)} - {len(floors) - len(found)}"
+            )
+            time.sleep(self.config.timegap_topic_in)
 
     def get_topic_usernames(self, topic_id, topic_sf, dedup=False):
         data = self.get_onetopic_info(topic_id, topic_sf, force=True)

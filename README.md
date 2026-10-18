@@ -1,12 +1,12 @@
 # kf-analysis
 
-绯月论坛活跃度数据获取与分析项目（v2.5.3）。  
+绯月论坛活跃度数据获取与分析项目（v2.5.4）。  
 v2.0.0 架构重构完成；v2.1.0 支持了部分论坛动作（发帖/编辑/私信/买贴/转账）；  
 v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0-v2.4.0 新增了持续监控功能；  
 截止 v2.5.0，重构完成时构想的所有功能均已实现，今后将以优化与修正为主。  
 绝大部分功能同时支持 CLI 与包内函数两种调用形式（小部分风险论坛动作只支持包内函数调用）。  
 支持板块级与主题级增量抓取；实现“数据获取→数据分析→发帖”全流程自动化接口。  
-经 938,724 条回复数据实测，数据抓取与入库结果符合预期（2026-10-05 时数据）。
+经 942,812 条回复数据实测，数据抓取与入库结果符合预期（2026-10-18 时数据）。
 
 * 本项目运行在 bbs.kfpromax.com 域名下。  
 * 本项目的文件内注释比 README.md 更详细。
@@ -30,8 +30,8 @@ v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0-v2.4.0 新增
     "username": {
         "headers": {
             "Host": "bbs.kfpromax.com",
-            "User-Agent": "……",
-            "Cookie": "……"
+            "User-Agent": "......",
+            "Cookie": "......"
         },
         "proxies": {
             "http": "......",
@@ -41,8 +41,8 @@ v2.2.0 完成了对任意 uid 注册时间的建模估算；v2.3.0-v2.4.0 新增
     "username-no-proxies": {
         "headers": {
             "Host": "bbs.kfpromax.com",
-            "User-Agent": "……",
-            "Cookie": "……"
+            "User-Agent": "......",
+            "Cookie": "......"
         },
         "proxies": {}
     }
@@ -195,6 +195,7 @@ kf = KFanalysis(cfg, db_path="kf.db")
 kf.fetch_all(force=False, early_stop=False)           # ↔ fetch all
 kf.fetch_board(fid, force=False, early_stop=False)    # ↔ fetch board
 kf.fetch_onetopic(tid, sf, force=False)               # ↔ fetch topic
+kf.rescan_hidden_replies()                            # 更新 hidden 回复状态
 kf.get_search_results(keyword, store=False)           # ↔ search --keyword
 kf.get_search_results(pwuser, store=False)            # ↔ search --username
 kf.get_search_results(authorid, store=False)          # ↔ search --authorid
@@ -207,6 +208,7 @@ stats = kf.storage.stats()                            # ↔ state
 
 * `fetch_all` 是多次 `fetch_board` 的调用；
 * `fetch_board` 是多次 `fetch_onetopic` 的调用。
+* `rescan_hidden_replies` 会重新抓取库内所有 `status=hidden` 的回复。
 * `get_search_results` 相关说明：
     * `keyword`、`pwuser` 与 `authorid` 只能指定且必须指定其中之一；
     * 搜索内容需为 **GBK 百分号编码**形式，需要调用方前置处理（CLI 调用时无需在意）。
@@ -387,6 +389,11 @@ hp.db                     # 主页信息数据库·自动生成
 
 
 ## 更新日志
+* 2026.10.18 v2.5.4
+    * 新增 hidden 回复复核功能
+    * 修复回复状态入库时恒为 active 的问题
+    * 优化错误日志输出格式
+    * 降低 Python 版本要求
 * 2026.10.05 v2.5.3
     * 修复 pages 参数无法生效的问题
     * 修复全量更新模式下主题翻页失败时可能会破坏既有数据的问题
@@ -444,3 +451,21 @@ hp.db                     # 主页信息数据库·自动生成
     * 解析优化（已弃用）
 * 2025.05.11 v1.0.0
     * 初始版本（已弃用）
+
+
+## v2.5.4 数据真实性修复说明
+v2.5.4 修复了一个影响数据真实性的 bug：  
+回复入库时 `status` 被恒写为 `active`，解析层产出的 `hidden` 与 `banned` 状态被丢弃。  
+这导致库内所有回复无论真实状态如何都标记为 `active`，`status` 字段失去意义。  
+若数据库建立于 v2.5.4 之前，请先将本项目更新到最新版本，再依次执行以下两步：
+```SQL
+UPDATE reply SET status='banned' WHERE homepage_id IS NULL;
+UPDATE reply SET status='hidden' WHERE reply_text LIKE '该会员进度分低于%';
+```
+
+```python
+from kf_analysis import utils
+from kf_analysis.coordinator import KFanalysis
+kf = KFanalysis(utils.load_config(), db_path="kf.db")
+kf.rescan_hidden_replies()
+```

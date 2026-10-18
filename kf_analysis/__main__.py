@@ -60,7 +60,6 @@ import json
 import logging
 import re
 import time
-
 from . import utils
 from .actions import Actions, buy_topic, gbk_form, transfer_money
 from .coordinator import KFanalysis
@@ -77,7 +76,7 @@ logger = logging.getLogger("kf-analysis")
 def setup_logging():
     file = logging.FileHandler("error.log", encoding="utf-8")
     file.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S"))
-    file.terminator = "\n\n"
+    file.terminator = "\n\n\n"
     logger.addHandler(file)
 
 
@@ -351,7 +350,8 @@ def main():
         print(f"主题数: {stats['topic_count']}\n回复数: {stats['reply_count']}")
         print(f"最后抓取时间: {stamp}\n")
         with open("error.log", encoding="utf-8") as f:
-            print("".join(f.readlines()[-10:]))
+            blocks = [b for b in f.read().split("\n\n\n") if b.strip()]
+        print("\n".join(b.splitlines()[0] for b in blocks[-5:]))
 
 
 if __name__ == "__main__":

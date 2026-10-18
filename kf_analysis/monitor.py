@@ -54,7 +54,8 @@ def monitor_topic(
     targets = [[tid, sf, 0] for tid, sf in links]
     kf = KFanalysis(config, db_path=db_path if store else ":memory:")
 
-    def poll(tid, sf, floor, ecrof):
+    def poll(target, floor, ecrof):
+        tid, sf, _ = target
         data = kf.fetch_onetopic(tid, sf, force=ecrof, return_header=True)
         if data in ("closed", "deleted"):
             monitor_message(tid, "监控退出（目标已经不可访问）")
@@ -79,7 +80,7 @@ def monitor_topic(
             tid, sf, retry = target
             if retry is False or last[tid] < 0:
                 continue
-            data = poll(tid, sf, last[tid], False)
+            data = poll(target, last[tid], False)
             if data:
                 matches = event(data, criteria)
                 if matches:
@@ -91,7 +92,7 @@ def monitor_topic(
             if not retry:
                 monitor_message(tid, "基线建立中")
             stored = kf.storage.get_topic_max_floor(tid)
-            data = poll(tid, sf, stored, force)
+            data = poll(target, stored, force)
             if not data:
                 continue
             if stored < 0 or force:
@@ -219,7 +220,7 @@ def board_action_default(matches):
     lines = []
     for row, _ in matches[:3]:
         lines.append(f"作者：{row['topic_poster']}\n" f"标题：{row['topic_title']}")
-    monitor_bubble(f"命中主题: {len(matches)}\n{"\n".join(lines)}")
+    monitor_bubble(f"命中主题: {len(matches)}\n" + "\n".join(lines))
 
 
 def monitor_board(
