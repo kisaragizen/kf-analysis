@@ -139,6 +139,7 @@ def parse_replies(page_list, topic_id, topic_sf, username_dict=None):
     if username_dict is None:
         username_dict = {}
     for content in page_list:
+        content = content.decode("gb18030", "replace")
         soup = BeautifulSoup(content, "lxml")
         divlist = soup.find_all("div", class_="readtext")
         for x in divlist:

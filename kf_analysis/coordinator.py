@@ -329,6 +329,21 @@ class KFanalysis:
             self.fetch_board(fid, force=force, disp=disp, early_stop=early_stop)
             time.sleep(self.config.timegap_board_out)
 
+    def get_page_replies(self, topic_id, topic_sf, page):
+        url = f"{utils.topic_url(topic_id, topic_sf)}&page={page}"
+        response = self.client.get(url)
+        if response.status_code != 200:
+            logger.error(
+                utils.log_error(
+                    "E105",
+                    "coordinator.get_page_replies",
+                    f"帖子 ({topic_id}, {topic_sf}, {page})",
+                )
+            )
+            return None
+        parsed = analyser.parse_replies([response.content], topic_id, topic_sf)
+        return {r["floor"]: r for r in parsed}
+
     def rescan_hidden_replies(self):
         # 用户进度分不足 90 时回复会被隐藏，这并非永久状态
         # 本函数用于重新获取并解析 status=hidden 的回复，覆盖写入
@@ -337,13 +352,9 @@ class KFanalysis:
         for tid, sf, floor in self.storage.get_hidden_replies():
             pages.setdefault((tid, sf, floor // 20 + 1), []).append(floor)
         for index, ((tid, sf, page), floors) in enumerate(pages.items(), 1):
-            response = self.client.get(f"{utils.topic_url(tid, sf)}&page={page}")
-            parsed = {}
-            if response.status_code == 200:
-                parsed = {
-                    r["floor"]: r
-                    for r in analyser.parse_replies([response.content], tid, sf)
-                }
+            parsed = self.get_page_replies(tid, sf, page)
+            if parsed is None:
+                continue
             found = []
             for floor in floors:
                 if floor in parsed:
@@ -360,6 +371,39 @@ class KFanalysis:
             print(
                 f"{index}/{len(pages)} ({tid}, {sf}, {page}): "
                 f"{len(found)} = {len(floors)} - {len(floors) - len(found)}"
+            )
+            time.sleep(self.config.timegap_topic_in)
+
+    def rescan_floor_holes(self):
+        # 2026-10-19 发现论坛存在极少量回复不能以 GBK 编码解析
+        # 这会导致 lxml 解析器在失败点静默截断，丢弃所有失败点后的楼层，产生连续的楼层空洞
+        # 与“因管理行为造成的楼层空洞”不同，这种空洞的存在并非预期，已在 v2.5.5 版本修复
+        # 本函数用于重新获取并解析空洞所在页，按照新解析规则修复这些“伪楼层空洞”
+        pages = {}
+        for tid, sf, floor in self.storage.get_floor_holes():
+            pages.setdefault((tid, sf, floor // 20 + 1), []).append(floor)
+        for index, ((tid, sf, page), floors) in enumerate(pages.items(), 1):
+            parsed = self.get_page_replies(tid, sf, page)
+            if parsed is None:
+                continue
+            if not parsed:
+                logger.warning(
+                    utils.log_error(
+                        "W102",
+                        "coordinator.rescan_floor_holes",
+                        f"帖子 ({tid}, {sf}, {page})",
+                    )
+                )
+                continue
+            now = int(time.time())
+            found = [parsed[floor] for floor in floors if floor in parsed]
+            self.storage.insert_replies(tid, {"reply_list": found, "record_time": now})
+            self.storage.update_replies(list(parsed.values()), now)
+            stored = self.storage.get_stored_page_floors(tid, page)
+            missing = [floor for floor in floors if floor not in stored]
+            print(
+                f"{index}/{len(pages)} ({tid}, {sf}, {page}): "
+                f"{len(floors) - len(missing)} = {len(floors)} - {len(missing)}"
             )
             time.sleep(self.config.timegap_topic_in)
 

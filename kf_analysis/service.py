@@ -113,6 +113,24 @@ class Storage:
             "ORDER BY topic_id, floor"
         ).fetchall()
 
+    def get_floor_holes(self):
+        holes = []
+        floors_query = "SELECT floor FROM reply WHERE topic_id=?"
+        rows = self.conn.execute(
+            "SELECT topic_id, topic_sf, reply_count FROM topic WHERE reply_count <> "
+            "(SELECT COUNT(*) FROM reply WHERE reply.topic_id = topic.topic_id)"
+        ).fetchall()
+        for tid, sf, count in rows:
+            floors = {row[0] for row in self.conn.execute(floors_query, (tid,))}
+            holes += [(tid, sf, floor) for floor in range(count) if floor not in floors]
+        return holes
+
+    def get_stored_page_floors(self, topic_id, page):
+        # 返回某页范围内已入库的楼层号集合
+        query = "SELECT floor FROM reply WHERE topic_id=? AND floor BETWEEN ? AND ?"
+        rows = self.conn.execute(query, (topic_id, page * 20 - 20, page * 20 - 1))
+        return {row[0] for row in rows}
+
     def insert_closed_topic(self, topic_id, topic_sf, status):
         # 为被锁定贴与被删除贴添加占位最小化条目
         self.conn.execute(
@@ -213,6 +231,8 @@ class Storage:
                     )
                 )
                 dup += [pid for pid in chunk if stored.get(pid, 0) < counts[pid]]
+            if not dup:
+                return
             logger.warning(
                 utils.log_error(
                     "W101",
